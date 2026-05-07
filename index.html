@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sprite Animation Controller</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-row">
+      <label class="field">
+        Sheet
+        <select id="sheet-select"></select>
+      </label>
+      <label class="field">
+        Cell W
+        <input id="cell-width" type="number" min="1" step="1" value="128" />
+      </label>
+      <label class="field">
+        Cell H
+        <input id="cell-height" type="number" min="1" step="1" value="128" />
+      </label>
+      <button id="apply-cell" type="button">Apply</button>
+      <span id="grid-info" class="muted"></span>
+    </div>
+    <div class="toolbar-row">
+      <button id="upload-btn" type="button">+ Upload image</button>
+      <input id="upload-input" type="file" accept="image/*" multiple hidden />
+      <button id="delete-sheet" type="button" class="danger-outline">Delete sheet</button>
+      <span class="spacer"></span>
+      <button id="import-btn" type="button">Import JSON</button>
+      <input id="import-input" type="file" accept="application/json,.json" hidden />
+      <button id="export-btn" type="button">Export JSON</button>
+      <button id="reset-btn" type="button" class="danger">Reset</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="sheet-pane">
+      <div id="sheet-stage" class="sheet-stage">
+        <img id="sheet-image" alt="" draggable="false" />
+        <div id="grid-overlay" class="grid-overlay"></div>
+        <div id="drag-box" class="drag-box hidden"></div>
+        <div id="drop-hint" class="drop-hint hidden">Drop image to add a new sheet</div>
+        <div id="sheet-empty" class="sheet-empty hidden">
+          No sheet loaded. Upload an image or pick a sample.
+        </div>
+      </div>
+    </section>
+
+    <aside class="editor-pane">
+      <h2>Animation editor</h2>
+      <label class="field block">
+        Name
+        <input id="anim-name" type="text" placeholder="idle / walk / attack" />
+      </label>
+      <div class="row">
+        <label class="field">
+          FPS
+          <input id="anim-fps" type="number" min="1" max="120" step="1" value="8" />
+        </label>
+        <label class="check">
+          <input id="anim-loop" type="checkbox" checked /> loop
+        </label>
+        <label class="check">
+          <input id="anim-pingpong" type="checkbox" /> pingpong
+        </label>
+      </div>
+      <label class="field block">
+        Frames (comma-separated indices)
+        <input id="anim-frames" type="text" placeholder="0,1,2,3" />
+      </label>
+      <div class="preview-wrap">
+        <canvas id="preview-canvas" width="128" height="128"></canvas>
+        <div class="preview-controls">
+          <button id="preview-play" type="button">▶ Play</button>
+          <button id="preview-pause" type="button">⏸ Pause</button>
+          <span id="preview-info" class="muted"></span>
+        </div>
+      </div>
+      <div class="row">
+        <button id="save-anim" type="button" class="primary">Save animation</button>
+        <button id="clear-selection" type="button">Clear selection</button>
+        <button id="new-anim" type="button">New</button>
+      </div>
+      <p class="hint muted">Click cells, Shift/Ctrl-click to toggle, or drag a box. Empty cells are disabled.</p>
+    </aside>
+
+    <section class="list-pane">
+      <h2>Saved animations <span id="anim-count" class="muted"></span></h2>
+      <ul id="anim-list" class="anim-list"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

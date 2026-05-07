@@ -1,0 +1,5 @@
+[
+  { "name": "cat",    "src": "cat.png",    "cellWidth": 128, "cellHeight": 128 },
+  { "name": "dog",    "src": "dog.png",    "cellWidth": 128, "cellHeight": 128 },
+  { "name": "rabbit", "src": "rabbit.png", "cellWidth": 128, "cellHeight": 128 }
+]
