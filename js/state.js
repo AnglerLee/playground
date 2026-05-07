@@ -26,8 +26,8 @@ export function emptyAnimEditor() {
 export function emptySheetMeta({
   src,
   origin = 'sample',
-  cellWidth = 128,
-  cellHeight = 128,
+  cellWidth = 0,
+  cellHeight = 0,
   persistImage = true,
 } = {}) {
   return {
@@ -38,6 +38,14 @@ export function emptySheetMeta({
     cellHeight,
     animations: [],
   };
+}
+
+export const REF_BASE_SIZE = 1408;
+export const REF_CELL_SIZE = 128;
+
+export function autoCellSize(natural) {
+  if (!Number.isFinite(natural) || natural <= 0) return REF_CELL_SIZE;
+  return Math.max(1, Math.round((natural * REF_CELL_SIZE) / REF_BASE_SIZE));
 }
 
 export function subscribe(fn) {
@@ -129,8 +137,8 @@ export function applyLoaded(payload, { merge = false } = {}) {
       : emptySheetMeta({
           src: sheet.src || '',
           origin: sheet.origin || 'sample',
-          cellWidth: Number(sheet.cellWidth) || 128,
-          cellHeight: Number(sheet.cellHeight) || 128,
+          cellWidth: Number(sheet.cellWidth) || 0,
+          cellHeight: Number(sheet.cellHeight) || 0,
           persistImage: sheet.persistImage !== false,
         });
     if (sheet.src) merged.src = sheet.src;

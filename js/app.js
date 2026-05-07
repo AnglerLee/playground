@@ -1,10 +1,10 @@
 import {
   state, emptySheetMeta, emptyAnimEditor, ensureAnimId,
-  loadFromStorage, applyLoaded, clearStorage, notify, saveNow,
+  loadFromStorage, applyLoaded, clearStorage, notify, saveNow, autoCellSize,
 } from './state.js';
 import {
-  initSheetView, setSelectionListener, showSheet, getSelection, setSelection,
-  loadImage, clearEmptyCellCache,
+  initSheetView, setSelectionListener, setDoubleClickListener,
+  showSheet, setSequence, loadImage, clearEmptyCellCache,
 } from './sheet.js';
 import { createPlayer } from './preview.js';
 import {
@@ -42,6 +42,7 @@ const els = {
   animLoop: document.getElementById('anim-loop'),
   animPingpong: document.getElementById('anim-pingpong'),
   animFrames: document.getElementById('anim-frames'),
+  frameTrack: document.getElementById('frame-track'),
 
   previewCanvas: document.getElementById('preview-canvas'),
   previewPlay: document.getElementById('preview-play'),
@@ -74,6 +75,7 @@ async function init() {
     dragBox: els.dragBox,
   });
   setSelectionListener(onSelectionChanged);
+  setDoubleClickListener(onCellDoubleClicked);
 
   const stored = loadFromStorage();
   if (stored) applyLoaded(stored, { merge: false });
@@ -84,8 +86,8 @@ async function init() {
       state.sheets[entry.name] = emptySheetMeta({
         src: entry.src,
         origin: 'sample',
-        cellWidth: entry.cellWidth,
-        cellHeight: entry.cellHeight,
+        cellWidth: entry.cellWidth || 0,
+        cellHeight: entry.cellHeight || 0,
         persistImage: false,
       });
     } else {
@@ -140,12 +142,12 @@ async function selectSheet(name) {
   }
   state.ui.activeSheet = name;
   els.sheetSelect.value = name;
-  els.cellWidth.value = sheet.cellWidth;
-  els.cellHeight.value = sheet.cellHeight;
   state.ui.editing = emptyAnimEditor();
-  syncEditorInputs();
 
   if (!sheet.src) {
+    els.cellWidth.value = sheet.cellWidth || '';
+    els.cellHeight.value = sheet.cellHeight || '';
+    syncEditorInputs();
     renderEmptyState('This uploaded sheet was not persisted. Re-upload to edit.');
     notify();
     renderAnimList();
@@ -153,6 +155,25 @@ async function selectSheet(name) {
   }
 
   els.sheetEmpty.classList.add('hidden');
+
+  let img;
+  try {
+    img = await loadImage(sheet.src);
+  } catch (err) {
+    console.error(err);
+    renderEmptyState('Failed to load image.');
+    return;
+  }
+  if (!sheet.cellWidth || sheet.cellWidth <= 0) {
+    sheet.cellWidth = autoCellSize(img.naturalWidth);
+  }
+  if (!sheet.cellHeight || sheet.cellHeight <= 0) {
+    sheet.cellHeight = autoCellSize(img.naturalHeight);
+  }
+  els.cellWidth.value = sheet.cellWidth;
+  els.cellHeight.value = sheet.cellHeight;
+  syncEditorInputs();
+
   let result;
   try {
     result = await showSheet({
@@ -167,7 +188,7 @@ async function selectSheet(name) {
   }
   if (result) {
     currentImage = result.image;
-    els.gridInfo.textContent = `Image ${result.width}×${result.height} → ${result.columns}×${result.rows} grid`;
+    els.gridInfo.textContent = `Image ${result.width}×${result.height} → ${result.columns}×${result.rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`;
     player.setSheet({
       image: currentImage,
       cellW: sheet.cellWidth,
@@ -193,10 +214,31 @@ function renderEmptyState(message) {
 
 function onSelectionChanged(indices) {
   const ed = state.ui.editing;
-  ed.frames = indices.slice();
-  els.animFrames.value = indices.join(',');
+  const presentNow = new Set(indices);
+  const presentBefore = new Set(ed.frames);
+  const next = ed.frames.filter((i) => presentNow.has(i));
+  for (const i of indices) {
+    if (!presentBefore.has(i)) next.push(i);
+  }
+  ed.frames = next;
+  syncFrameInputs();
   applyEditorPreview();
   notify();
+}
+
+function onCellDoubleClicked(idx) {
+  const ed = state.ui.editing;
+  ed.frames = [...ed.frames, idx];
+  syncFrameInputs();
+  setSequence(ed.frames);
+  applyEditorPreview();
+  notify();
+}
+
+function syncFrameInputs() {
+  const ed = state.ui.editing;
+  els.animFrames.value = ed.frames.join(',');
+  renderFrameTrack();
 }
 
 function syncEditorInputs() {
@@ -205,9 +247,85 @@ function syncEditorInputs() {
   els.animFps.value = ed.fps;
   els.animLoop.checked = !!ed.loop;
   els.animPingpong.checked = !!ed.pingpong;
-  els.animFrames.value = ed.frames.join(',');
-  setSelection(ed.frames);
+  syncFrameInputs();
+  setSequence(ed.frames);
   applyEditorPreview();
+}
+
+function renderFrameTrack() {
+  const ed = state.ui.editing;
+  els.frameTrack.innerHTML = '';
+  ed.frames.forEach((frameIdx, i) => {
+    const li = document.createElement('li');
+    li.className = 'frame-chip';
+    li.draggable = true;
+    li.dataset.pos = String(i);
+    li.title = `position ${i + 1}: cell #${frameIdx}`;
+
+    const ord = document.createElement('span');
+    ord.className = 'ord';
+    ord.textContent = `${i + 1}.`;
+    const idx = document.createElement('span');
+    idx.className = 'idx';
+    idx.textContent = `#${frameIdx}`;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.title = 'remove';
+    del.textContent = '✕';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ed.frames = ed.frames.filter((_, j) => j !== i);
+      syncFrameInputs();
+      setSequence(ed.frames);
+      applyEditorPreview();
+      notify();
+    });
+    li.appendChild(ord);
+    li.appendChild(idx);
+    li.appendChild(del);
+
+    li.addEventListener('dragstart', (e) => {
+      li.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', String(i));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    li.addEventListener('dragend', () => {
+      li.classList.remove('dragging');
+      els.frameTrack.querySelectorAll('.frame-chip').forEach((el) => {
+        el.classList.remove('drop-before', 'drop-after');
+      });
+    });
+    li.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = li.getBoundingClientRect();
+      const after = e.clientX > rect.left + rect.width / 2;
+      li.classList.toggle('drop-before', !after);
+      li.classList.toggle('drop-after', after);
+    });
+    li.addEventListener('dragleave', () => {
+      li.classList.remove('drop-before', 'drop-after');
+    });
+    li.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const from = Number(e.dataTransfer.getData('text/plain'));
+      if (!Number.isFinite(from) || from === i) return;
+      const rect = li.getBoundingClientRect();
+      const after = e.clientX > rect.left + rect.width / 2;
+      let target = i + (after ? 1 : 0);
+      const arr = ed.frames.slice();
+      const [moved] = arr.splice(from, 1);
+      if (from < target) target -= 1;
+      arr.splice(target, 0, moved);
+      ed.frames = arr;
+      syncFrameInputs();
+      setSequence(ed.frames);
+      applyEditorPreview();
+      notify();
+    });
+
+    els.frameTrack.appendChild(li);
+  });
 }
 
 function applyEditorPreview() {
@@ -278,7 +396,8 @@ function wireEvents() {
   els.animFrames.addEventListener('change', () => {
     const frames = parseFrameInput(els.animFrames.value);
     state.ui.editing.frames = frames;
-    setSelection(frames);
+    setSequence(frames);
+    renderFrameTrack();
     applyEditorPreview();
     notify();
   });
@@ -289,7 +408,8 @@ function wireEvents() {
   els.saveAnim.addEventListener('click', saveAnimation);
   els.clearSel.addEventListener('click', () => {
     state.ui.editing.frames = [];
-    setSelection([]);
+    setSequence([]);
+    syncFrameInputs();
     applyEditorPreview();
     notify();
   });
@@ -346,8 +466,8 @@ async function handleUploads(files) {
     state.sheets[name] = emptySheetMeta({
       src: dataUrl,
       origin: 'uploaded',
-      cellWidth: 128,
-      cellHeight: 128,
+      cellWidth: 0,
+      cellHeight: 0,
       persistImage,
     });
     lastName = name;

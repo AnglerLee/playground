@@ -111,12 +111,11 @@ input[type="number"] { width: 6em; }
 .sheet-stage {
   position: relative;
   width: 100%;
-  overflow: auto;
+  height: calc(100vh - 200px);
+  overflow: hidden;
   background: repeating-conic-gradient(#2a2e36 0% 25%, #232730 0% 50%) 0 0/24px 24px;
   border-radius: 6px;
   user-select: none;
-  min-height: 60vh;
-  max-height: calc(100vh - 180px);
 }
 
 #sheet-image {
@@ -194,6 +193,53 @@ input[type="number"] { width: 6em; }
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 
+.frame-track {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  min-height: 36px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: #15181d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  counter-reset: frame;
+}
+.frame-track:empty::before {
+  content: 'Click cells in the sheet, or double-click for duplicates';
+  color: var(--muted);
+  font-size: 0.85em;
+  align-self: center;
+}
+.frame-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px 2px 6px;
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+}
+.frame-chip:active { cursor: grabbing; }
+.frame-chip.dragging { opacity: 0.4; }
+.frame-chip.drop-before { box-shadow: -2px 0 0 var(--accent-2); }
+.frame-chip.drop-after { box-shadow: 2px 0 0 var(--accent-2); }
+.frame-chip .ord { color: var(--muted); }
+.frame-chip .idx { font-weight: 600; }
+.frame-chip button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  font: inherit;
+  cursor: pointer;
+}
+.frame-chip button:hover { color: var(--danger); }
+
 .preview-wrap {
   display: flex;
   flex-direction: column;
@@ -253,5 +299,5 @@ input[type="number"] { width: 6em; }
       "editor"
       "list";
   }
-  .sheet-stage { max-height: 60vh; }
+  .sheet-stage { height: 60vh; }
 }

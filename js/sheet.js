@@ -75,21 +75,26 @@ export function clearEmptyCellCache(src) {
 }
 
 const sheetState = {
-  cellWidth: 128,
-  cellHeight: 128,
+  imageWidth: 0,
+  imageHeight: 0,
+  cellWidth: 0,
+  cellHeight: 0,
   columns: 0,
   rows: 0,
   emptyCells: new Set(),
-  selectionOrder: [],
+  sequence: [],
+  scale: 1,
   onSelectionChange: null,
+  onDoubleClickAdd: null,
 };
 
 let stage, image, overlay, dragBox;
 let pointerDown = false;
 let dragStarted = false;
 let dragStart = null;
-let initialSelection = [];
+let initialSequence = [];
 let dragMode = 'replace';
+let resizeObserver = null;
 
 export function initSheetView(refs) {
   stage = refs.stage;
@@ -100,11 +105,15 @@ export function initSheetView(refs) {
   overlay.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
+  overlay.addEventListener('dblclick', onDoubleClick);
+
+  resizeObserver = new ResizeObserver(() => relayout());
+  resizeObserver.observe(stage);
+  window.addEventListener('resize', relayout);
 }
 
-export function setSelectionListener(fn) {
-  sheetState.onSelectionChange = fn;
-}
+export function setSelectionListener(fn) { sheetState.onSelectionChange = fn; }
+export function setDoubleClickListener(fn) { sheetState.onDoubleClickAdd = fn; }
 
 export async function showSheet({ src, cellWidth, cellHeight }) {
   if (!src) {
@@ -113,17 +122,15 @@ export async function showSheet({ src, cellWidth, cellHeight }) {
     sheetState.columns = 0;
     sheetState.rows = 0;
     sheetState.emptyCells = new Set();
-    setSelection([]);
+    setSequence([]);
     return null;
   }
   const img = await loadImage(src);
   image.src = src;
-  image.style.width = `${img.naturalWidth}px`;
-  image.style.height = `${img.naturalHeight}px`;
   overlay.style.display = 'grid';
-  overlay.style.width = `${img.naturalWidth}px`;
-  overlay.style.height = `${img.naturalHeight}px`;
 
+  sheetState.imageWidth = img.naturalWidth;
+  sheetState.imageHeight = img.naturalHeight;
   sheetState.cellWidth = cellWidth;
   sheetState.cellHeight = cellHeight;
   sheetState.columns = Math.floor(img.naturalWidth / cellWidth);
@@ -131,7 +138,8 @@ export async function showSheet({ src, cellWidth, cellHeight }) {
 
   sheetState.emptyCells = await detectEmptyCells(img, cellWidth, cellHeight, src);
   rebuildOverlay();
-  setSelection([]);
+  relayout();
+  setSequence([]);
   return {
     image: img,
     columns: sheetState.columns,
@@ -143,9 +151,10 @@ export async function showSheet({ src, cellWidth, cellHeight }) {
 
 function rebuildOverlay() {
   overlay.innerHTML = '';
-  const { columns, rows, cellWidth, cellHeight, emptyCells } = sheetState;
-  overlay.style.gridTemplateColumns = `repeat(${columns}, ${cellWidth}px)`;
-  overlay.style.gridTemplateRows = `repeat(${rows}, ${cellHeight}px)`;
+  const { columns, rows, emptyCells } = sheetState;
+  if (columns <= 0 || rows <= 0) return;
+  overlay.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+  overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   const frag = document.createDocumentFragment();
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < columns; c++) {
@@ -153,55 +162,62 @@ function rebuildOverlay() {
       const cell = document.createElement('div');
       cell.className = 'cell' + (emptyCells.has(idx) ? ' empty' : '');
       cell.dataset.index = String(idx);
-      cell.title = `#${idx} (r${r}, c${c})`;
+      cell.title = `#${idx} (r${r}, c${c}) — double-click to append duplicate`;
       frag.appendChild(cell);
     }
   }
   overlay.appendChild(frag);
 }
 
-export function getSelection() {
-  return sheetState.selectionOrder.slice();
+function relayout() {
+  if (!sheetState.imageWidth || !sheetState.imageHeight) return;
+  const stageW = Math.max(1, stage.clientWidth);
+  const stageH = Math.max(1, stage.clientHeight);
+  const scale = Math.min(stageW / sheetState.imageWidth, stageH / sheetState.imageHeight, 1);
+  sheetState.scale = scale;
+  const w = sheetState.imageWidth * scale;
+  const h = sheetState.imageHeight * scale;
+  image.style.width = `${w}px`;
+  image.style.height = `${h}px`;
+  overlay.style.width = `${w}px`;
+  overlay.style.height = `${h}px`;
 }
 
-export function setSelection(indices) {
+export function getSequence() {
+  return sheetState.sequence.slice();
+}
+
+export function setSequence(frames) {
+  const total = sheetState.columns * sheetState.rows;
   const valid = [];
-  const seen = new Set();
-  for (const i of indices) {
+  for (const i of frames) {
     const n = i | 0;
-    if (n < 0) continue;
-    if (n >= sheetState.columns * sheetState.rows) continue;
+    if (n < 0 || n >= total) continue;
     if (sheetState.emptyCells.has(n)) continue;
-    if (seen.has(n)) continue;
-    seen.add(n);
     valid.push(n);
   }
-  sheetState.selectionOrder = valid;
+  sheetState.sequence = valid;
   syncCellsSelected();
   if (sheetState.onSelectionChange) sheetState.onSelectionChange(valid);
 }
 
 function syncCellsSelected() {
-  const order = new Map(sheetState.selectionOrder.map((idx, i) => [idx, i + 1]));
+  const seen = new Set(sheetState.sequence);
   for (const cell of overlay.querySelectorAll('.cell')) {
     const idx = Number(cell.dataset.index);
-    if (order.has(idx)) {
-      cell.classList.add('selected');
-      cell.dataset.order = String(order.get(idx));
-    } else {
-      cell.classList.remove('selected');
-      delete cell.dataset.order;
-    }
+    if (seen.has(idx)) cell.classList.add('selected');
+    else cell.classList.remove('selected');
   }
 }
 
 function cellIndexAtPoint(clientX, clientY) {
   const rect = overlay.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return -1;
   const x = clientX - rect.left;
   const y = clientY - rect.top;
-  if (x < 0 || y < 0) return -1;
-  const c = Math.floor(x / sheetState.cellWidth);
-  const r = Math.floor(y / sheetState.cellHeight);
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return -1;
+  const c = Math.floor(x / (rect.width / sheetState.columns));
+  const r = Math.floor(y / (rect.height / sheetState.rows));
   if (c < 0 || c >= sheetState.columns) return -1;
   if (r < 0 || r >= sheetState.rows) return -1;
   return r * sheetState.columns + c;
@@ -213,7 +229,7 @@ function onPointerDown(e) {
   pointerDown = true;
   dragStarted = false;
   dragStart = { x: e.clientX, y: e.clientY };
-  initialSelection = sheetState.selectionOrder.slice();
+  initialSequence = sheetState.sequence.slice();
   dragMode = e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : 'replace';
   overlay.setPointerCapture?.(e.pointerId);
 }
@@ -238,12 +254,12 @@ function onPointerMove(e) {
   dragBox.style.width = `${x2 - x1}px`;
   dragBox.style.height = `${y2 - y1}px`;
 
-  const ox = overlayRect.left;
-  const oy = overlayRect.top;
-  const cx1 = Math.max(0, Math.floor((x1 - ox) / sheetState.cellWidth));
-  const cy1 = Math.max(0, Math.floor((y1 - oy) / sheetState.cellHeight));
-  const cx2 = Math.min(sheetState.columns - 1, Math.floor((x2 - ox) / sheetState.cellWidth));
-  const cy2 = Math.min(sheetState.rows - 1, Math.floor((y2 - oy) / sheetState.cellHeight));
+  const cellW = overlayRect.width / sheetState.columns;
+  const cellH = overlayRect.height / sheetState.rows;
+  const cx1 = Math.max(0, Math.floor((x1 - overlayRect.left) / cellW));
+  const cy1 = Math.max(0, Math.floor((y1 - overlayRect.top) / cellH));
+  const cx2 = Math.min(sheetState.columns - 1, Math.floor((x2 - overlayRect.left) / cellW));
+  const cy2 = Math.min(sheetState.rows - 1, Math.floor((y2 - overlayRect.top) / cellH));
 
   const boxIndices = [];
   for (let r = cy1; r <= cy2; r++) {
@@ -255,17 +271,20 @@ function onPointerMove(e) {
 
   let next;
   if (dragMode === 'toggle') {
-    const set = new Set(initialSelection);
+    const baseSeen = new Set(initialSequence);
+    next = initialSequence.slice();
     for (const i of boxIndices) {
-      if (set.has(i)) set.delete(i);
-      else set.add(i);
+      if (baseSeen.has(i)) {
+        next = next.filter((x) => x !== i);
+      } else {
+        baseSeen.add(i);
+        next.push(i);
+      }
     }
-    next = initialSelection.filter((i) => set.has(i));
-    for (const i of boxIndices) if (set.has(i) && !next.includes(i)) next.push(i);
   } else {
     next = boxIndices;
   }
-  setSelection(next);
+  setSequence(next);
 }
 
 function onPointerUp(e) {
@@ -275,21 +294,29 @@ function onPointerUp(e) {
   if (!dragStarted) {
     const idx = cellIndexAtPoint(e.clientX, e.clientY);
     if (idx >= 0 && !sheetState.emptyCells.has(idx)) {
+      const present = initialSequence.includes(idx);
       if (dragMode === 'toggle') {
-        const next = initialSelection.slice();
-        const at = next.indexOf(idx);
-        if (at >= 0) next.splice(at, 1);
-        else next.push(idx);
-        setSelection(next);
+        const next = present
+          ? initialSequence.filter((x) => x !== idx)
+          : [...initialSequence, idx];
+        setSequence(next);
+      } else if (present) {
+        setSequence(initialSequence.filter((x) => x !== idx));
       } else {
-        setSelection([idx]);
+        setSequence([...initialSequence, idx]);
       }
     } else if (dragMode === 'replace') {
-      setSelection([]);
+      setSequence([]);
     }
   }
   dragStarted = false;
-  initialSelection = [];
+  initialSequence = [];
+}
+
+function onDoubleClick(e) {
+  const idx = cellIndexAtPoint(e.clientX, e.clientY);
+  if (idx < 0 || sheetState.emptyCells.has(idx)) return;
+  if (sheetState.onDoubleClickAdd) sheetState.onDoubleClickAdd(idx);
 }
 
 export function getSheetGrid() {

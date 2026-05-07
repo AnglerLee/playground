@@ -16,7 +16,7 @@ export async function fetchManifest(url = 'images/manifest.json') {
 function normalizeManifestEntry(entry) {
   if (typeof entry === 'string') {
     const name = entry.replace(/\.[^.]+$/, '');
-    return { name, src: `images/${entry}`, cellWidth: 128, cellHeight: 128 };
+    return { name, src: `images/${entry}`, cellWidth: 0, cellHeight: 0 };
   }
   if (entry && typeof entry === 'object' && entry.src) {
     const src = /^(https?:|data:|\/|images\/)/.test(entry.src)
@@ -26,8 +26,8 @@ function normalizeManifestEntry(entry) {
     return {
       name,
       src,
-      cellWidth: Number(entry.cellWidth) || 128,
-      cellHeight: Number(entry.cellHeight) || 128,
+      cellWidth: Number(entry.cellWidth) || 0,
+      cellHeight: Number(entry.cellHeight) || 0,
     };
   }
   return null;
