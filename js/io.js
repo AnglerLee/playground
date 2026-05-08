@@ -42,13 +42,21 @@ export function readImageAsDataURL(file) {
   });
 }
 
-export function downloadJSON(filename = 'sprite-animations.json') {
+function safeFileName(name) {
+  return String(name || 'sheet').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 60) || 'sheet';
+}
+
+export function downloadJSON(sheetName, filename) {
   const data = serialize();
+  if (sheetName && data.sheets && data.sheets[sheetName]) {
+    data.sheets = { [sheetName]: data.sheets[sheetName] };
+  }
+  const fname = filename || `${safeFileName(sheetName)}-animations.json`;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = fname;
   document.body.appendChild(a);
   a.click();
   a.remove();

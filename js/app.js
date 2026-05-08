@@ -1,12 +1,16 @@
 import {
   state, emptySheetMeta, emptyAnimEditor, ensureAnimId,
   loadFromStorage, applyLoaded, clearStorage, notify, saveNow, autoCellSize,
+  materializeGridAnimations,
   DEFAULT_ANCHOR, DEFAULT_SHEET_MODE, ANCHOR_MODES, SHEET_MODES,
 } from './state.js';
 import {
   initSheetView, setSelectionListener,
   showSheet, setMode as sheetSetMode, setAnchorMode as sheetSetAnchorMode,
   setSequence, loadImage, clearEmptyCellCache,
+  rectFromCellIndex, cellIndexOfRect,
+  rectFromComponentId, componentIdOfRect,
+  getComponentInfo,
 } from './sheet.js';
 import { createPlayer } from './preview.js';
 import {
@@ -73,11 +77,6 @@ function getActiveSheet() {
   const name = state.ui.activeSheet;
   if (!name) return null;
   return state.sheets[name] || null;
-}
-
-function activeMode() {
-  const sheet = getActiveSheet();
-  return sheet?.mode || DEFAULT_SHEET_MODE;
 }
 
 async function init() {
@@ -154,7 +153,6 @@ function syncToolbarFromSheet(sheet) {
   els.gridRow.classList.toggle('hidden', mode !== 'grid');
   els.hintGrid.classList.toggle('hidden', mode !== 'grid');
   els.hintFreepick.classList.toggle('hidden', mode !== 'freepick');
-  els.animFrames.disabled = mode === 'freepick';
 }
 
 async function selectSheet(name) {
@@ -200,6 +198,10 @@ async function selectSheet(name) {
   }
   els.cellWidth.value = sheet.cellWidth;
   els.cellHeight.value = sheet.cellHeight;
+
+  // Convert legacy int-frames grid animations to rect[] now that image is available.
+  if (materializeGridAnimations(sheet, img)) saveNow();
+
   syncEditorInputs();
 
   let result;
@@ -225,13 +227,7 @@ async function selectSheet(name) {
       ? `${result.columns}×${result.rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`
       : sheet.mode === 'freepick' ? 'freepick' : '—';
     els.gridInfo.textContent = `Image ${result.width}×${result.height} → ${gridDesc}`;
-    player.setSheet({
-      image: currentImage,
-      kind: 'grid',
-      cellW: sheet.cellWidth,
-      cellH: sheet.cellHeight,
-      cols: result.columns,
-    });
+    player.setSheet({ image: currentImage });
   }
   renderAnimList();
   applyEditorPreview();
@@ -239,7 +235,7 @@ async function selectSheet(name) {
 }
 
 function setBusy(on) {
-  els.gridInfo.textContent = on ? 'Analyzing…' : els.gridInfo.textContent;
+  if (on) els.gridInfo.textContent = 'Analyzing…';
   document.body.style.cursor = on ? 'progress' : '';
 }
 
@@ -254,20 +250,20 @@ function renderEmptyState(message) {
   renderAnimList();
 }
 
-function onSelectionChanged(seq) {
+function onSelectionChanged(rects) {
   const ed = state.ui.editing;
-  ed.frames = seq;
+  ed.frames = rects;
   els.animFrames.value = framesToInputString(ed);
   applyEditorPreview();
   notify();
 }
 
 function framesToInputString(ed) {
+  if (!ed.frames.length) return '';
   if (ed.kind === 'freepick') {
-    if (!ed.frames.length) return '';
-    return ed.frames.map((f) => `[${f.x},${f.y},${f.w}×${f.h}]`).join(' ');
+    return ed.frames.map((f) => String(componentIdOfRect(f) || '?')).join(',');
   }
-  return ed.frames.join(',');
+  return ed.frames.map((f) => String(cellIndexOfRect(f))).join(',');
 }
 
 function syncEditorInputs() {
@@ -283,31 +279,20 @@ function syncEditorInputs() {
 
 function applyEditorPreview() {
   const ed = state.ui.editing;
-  if (ed.kind === 'freepick') {
-    player.setAnimation({
-      kind: 'freepick',
-      anchorMode: ed.anchorMode,
-      frames: ed.frames,
-      pingpong: ed.pingpong,
-      fps: ed.fps,
-      loop: ed.loop,
-    });
-  } else {
-    player.setAnimation({
-      kind: 'grid',
-      frames: ed.frames,
-      pingpong: ed.pingpong,
-      fps: ed.fps,
-      loop: ed.loop,
-    });
-  }
+  player.setAnimation({
+    frames: ed.frames,
+    anchorMode: ed.anchorMode,
+    pingpong: ed.pingpong,
+    fps: ed.fps,
+    loop: ed.loop,
+  });
   els.previewInfo.textContent = ed.frames.length
-    ? `${ed.frames.length}f @ ${ed.fps}fps${ed.kind === 'freepick' ? ' · ' + ed.anchorMode : ''}`
+    ? `${ed.frames.length}f @ ${ed.fps}fps · ${ed.kind === 'freepick' ? ed.anchorMode : 'grid'}`
     : 'no frames';
   if (ed.frames.length && !player.isPlaying()) player.play();
 }
 
-function parseFrameInput(value) {
+function parseIdsString(value) {
   return value
     .split(/[\s,]+/)
     .map((s) => s.trim())
@@ -315,6 +300,22 @@ function parseFrameInput(value) {
     .map((s) => Number(s))
     .filter((n) => Number.isFinite(n) && n >= 0)
     .map((n) => n | 0);
+}
+
+function idsToFrames(ids, kind) {
+  const out = [];
+  if (kind === 'freepick') {
+    for (const id of ids) {
+      const r = rectFromComponentId(id);
+      if (r) out.push(r);
+    }
+  } else {
+    for (const id of ids) {
+      const r = rectFromCellIndex(id);
+      if (r) out.push(r);
+    }
+  }
+  return out;
 }
 
 function wireEvents() {
@@ -343,7 +344,11 @@ function wireEvents() {
     if (file) await handleImport(file);
     els.importInput.value = '';
   });
-  els.exportBtn.addEventListener('click', () => downloadJSON());
+  els.exportBtn.addEventListener('click', () => {
+    const name = state.ui.activeSheet;
+    if (!name) { alert('No sheet selected.'); return; }
+    downloadJSON(name);
+  });
   els.resetBtn.addEventListener('click', resetAll);
 
   els.animName.addEventListener('input', () => { state.ui.editing.name = els.animName.value; notify(); });
@@ -363,9 +368,10 @@ function wireEvents() {
     notify();
   });
   els.animFrames.addEventListener('change', () => {
-    if (state.ui.editing.kind === 'freepick') return;
-    const frames = parseFrameInput(els.animFrames.value);
-    state.ui.editing.frames = frames;
+    const ed = state.ui.editing;
+    const ids = parseIdsString(els.animFrames.value);
+    const frames = idsToFrames(ids, ed.kind);
+    ed.frames = frames;
     setSequence(frames);
     applyEditorPreview();
     notify();
@@ -413,7 +419,9 @@ async function onModeChange(newMode) {
     const rows = Math.floor(currentImage.naturalHeight / sheet.cellHeight);
     els.gridInfo.textContent = `Image ${currentImage.naturalWidth}×${currentImage.naturalHeight} → ${cols}×${rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`;
   } else if (sheet.mode === 'freepick' && currentImage) {
-    els.gridInfo.textContent = `Image ${currentImage.naturalWidth}×${currentImage.naturalHeight} → freepick`;
+    const info = getComponentInfo();
+    const n = info?.components?.length || 0;
+    els.gridInfo.textContent = `Image ${currentImage.naturalWidth}×${currentImage.naturalHeight} → freepick (${n} sprites)`;
   }
   renderAnimList();
   applyEditorPreview();
@@ -441,7 +449,7 @@ function applyCellSize() {
   const gridAnims = sheet.animations.filter((a) => (a.kind || 'grid') === 'grid');
   if (gridAnims.length) {
     const ok = confirm(
-      `Changing cell size may invalidate frame indices in ${gridAnims.length} grid animation(s) for "${state.ui.activeSheet}". Continue?`,
+      `Changing cell size may invalidate frames in ${gridAnims.length} grid animation(s) for "${state.ui.activeSheet}". Continue?`,
     );
     if (!ok) {
       els.cellWidth.value = sheet.cellWidth;
@@ -452,6 +460,10 @@ function applyCellSize() {
   sheet.cellWidth = w;
   sheet.cellHeight = h;
   clearEmptyCellCache(sheet.src);
+  // Existing rect frames may no longer align — drop them so user re-picks
+  for (const a of sheet.animations) {
+    if ((a.kind || 'grid') === 'grid') a.frames = [];
+  }
   selectSheet(state.ui.activeSheet);
 }
 
@@ -559,16 +571,12 @@ function saveAnimation() {
     fps,
     loop: !!ed.loop,
     pingpong: !!ed.pingpong,
-  };
-  if (kind === 'freepick') {
-    payload.anchorMode = ed.anchorMode || sheet.anchorMode || DEFAULT_ANCHOR;
-    payload.frames = ed.frames.map((f) => ({
+    anchorMode: ed.anchorMode || sheet.anchorMode || DEFAULT_ANCHOR,
+    frames: ed.frames.map((f) => ({
       x: f.x | 0, y: f.y | 0, w: f.w | 0, h: f.h | 0,
       cx: f.cx, cy: f.cy,
-    }));
-  } else {
-    payload.frames = ed.frames.slice();
-  }
+    })),
+  };
 
   if (target) {
     Object.assign(target, payload);
@@ -592,13 +600,15 @@ async function loadAnimIntoEditor(anim) {
     setBusy(kind === 'freepick');
     try { await sheetSetMode(kind); } finally { setBusy(false); }
   }
+  // Defensive: ensure frames are rect[] (should already be after materialize)
+  const frames = Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object'
+    ? anim.frames.map((f) => ({ ...f }))
+    : [];
   state.ui.editing = {
     id: anim.id,
     kind,
     name: anim.name,
-    frames: kind === 'freepick'
-      ? anim.frames.map((f) => ({ ...f }))
-      : anim.frames.slice(),
+    frames,
     anchorMode: anim.anchorMode || sheet.anchorMode || DEFAULT_ANCHOR,
     fps: anim.fps,
     loop: !!anim.loop,
@@ -659,7 +669,9 @@ function renderAnimList() {
         id: null,
         kind,
         name: `${anim.name} copy`,
-        frames: kind === 'freepick' ? anim.frames.map((f) => ({ ...f })) : anim.frames.slice(),
+        frames: Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object'
+          ? anim.frames.map((f) => ({ ...f }))
+          : anim.frames.slice(),
         anchorMode: anim.anchorMode || DEFAULT_ANCHOR,
         fps: anim.fps,
         loop: !!anim.loop,
@@ -691,15 +703,9 @@ function renderAnimList() {
 
     els.animList.appendChild(li);
 
-    if (currentImage) {
+    if (currentImage && Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object') {
       const cardPlayer = createPlayer(canvas);
-      cardPlayer.setSheet({
-        image: currentImage,
-        kind: 'grid',
-        cellW: sheet.cellWidth,
-        cellH: sheet.cellHeight,
-        cols: Math.max(1, Math.floor(currentImage.naturalWidth / Math.max(1, sheet.cellWidth))),
-      });
+      cardPlayer.setSheet({ image: currentImage });
       cardPlayer.setAnimation(anim);
       cardPlayer.play();
       cardPlayers.set(anim.id, cardPlayer);

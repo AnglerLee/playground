@@ -141,7 +141,13 @@ export async function labelComponents(img, src) {
 
   const byLabel = new Map();
   for (const c of components) if (c) byLabel.set(c.label, c);
-  const result = { labels, components: components.filter(Boolean), byLabel, width: W, height: H };
+  const componentList = components.filter(Boolean);
+  // Pre-compute a stable id (1..N) ordered by top-left for nicer display
+  componentList.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  componentList.forEach((c, i) => { c.id = i + 1; });
+  const byId = new Map();
+  for (const c of componentList) byId.set(c.id, c);
+  const result = { labels, components: componentList, byLabel, byId, width: W, height: H };
   componentCache.set(src, result);
   return result;
 }
@@ -172,8 +178,7 @@ const sheetState = {
   components: null,
   mode: 'grid',
   anchorMode: 'bottom-center',
-  gridSequence: [],
-  freeSequence: [],
+  sequence: [],     // unified rect[]: each rect = { x, y, w, h, cx, cy }
   scale: 1,
   onSelectionChange: null,
 };
@@ -223,8 +228,7 @@ export async function showSheet({
     sheetState.rows = 0;
     sheetState.emptyCells = new Set();
     sheetState.components = null;
-    sheetState.gridSequence = [];
-    sheetState.freeSequence = [];
+    sheetState.sequence = [];
     emit();
     return null;
   }
@@ -241,8 +245,7 @@ export async function showSheet({
   sheetState.cellHeight = cellHeight;
   sheetState.columns = cellWidth > 0 ? Math.floor(img.naturalWidth / cellWidth) : 0;
   sheetState.rows = cellHeight > 0 ? Math.floor(img.naturalHeight / cellHeight) : 0;
-  sheetState.gridSequence = [];
-  sheetState.freeSequence = [];
+  sheetState.sequence = [];
 
   if (mode === 'grid' && cellWidth > 0 && cellHeight > 0) {
     sheetState.emptyCells = await detectEmptyCells(img, cellWidth, cellHeight, src);
@@ -280,8 +283,7 @@ export async function setMode(mode) {
     const img = await loadImage(sheetState.src);
     sheetState.components = await labelComponents(img, sheetState.src);
   }
-  sheetState.gridSequence = [];
-  sheetState.freeSequence = [];
+  sheetState.sequence = [];
   rebuildOverlay();
   relayout();
   emit();
@@ -292,6 +294,145 @@ export function setAnchorMode(anchorMode) {
   if (sheetState.mode === 'freepick') {
     rebuildFreepickSelection();
     emit();
+  }
+}
+
+// ─── Grid ↔ rect helpers ──────────────────────────────────────────────────
+
+export function rectFromCellIndex(idx) {
+  const cols = sheetState.columns;
+  const cw = sheetState.cellWidth;
+  const ch = sheetState.cellHeight;
+  if (cols <= 0 || cw <= 0 || ch <= 0) return null;
+  if (idx < 0 || idx >= cols * sheetState.rows) return null;
+  const col = idx % cols;
+  const row = Math.floor(idx / cols);
+  const x = col * cw;
+  const y = row * ch;
+  return { x, y, w: cw, h: ch, cx: x + cw / 2, cy: y + ch / 2 };
+}
+
+export function cellIndexOfRect(rect) {
+  const cols = sheetState.columns;
+  const cw = sheetState.cellWidth;
+  const ch = sheetState.cellHeight;
+  if (!rect || cols <= 0 || cw <= 0 || ch <= 0) return -1;
+  if (rect.w !== cw || rect.h !== ch) return -1;
+  if (rect.x % cw !== 0 || rect.y % ch !== 0) return -1;
+  const col = rect.x / cw;
+  const row = rect.y / ch;
+  if (col < 0 || col >= cols) return -1;
+  if (row < 0 || row >= sheetState.rows) return -1;
+  return row * cols + col;
+}
+
+export function rectFromComponentId(id) {
+  const comp = sheetState.components?.byId.get(id | 0);
+  if (!comp) return null;
+  return { x: comp.x, y: comp.y, w: comp.w, h: comp.h, cx: comp.cx, cy: comp.cy };
+}
+
+export function componentIdOfRect(rect) {
+  if (!sheetState.components || !rect) return -1;
+  for (const c of sheetState.components.components) {
+    if (c.x === rect.x && c.y === rect.y && c.w === rect.w && c.h === rect.h) return c.id;
+  }
+  return -1;
+}
+
+// ─── Sequence ─────────────────────────────────────────────────────────────
+
+export function getSequence() {
+  return sheetState.sequence.map(cloneRect);
+}
+
+function cloneRect(r) {
+  return { x: r.x, y: r.y, w: r.w, h: r.h, cx: r.cx, cy: r.cy };
+}
+
+function sameRect(a, b) {
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+export function setSequence(frames) {
+  const next = [];
+  const list = frames || [];
+  if (sheetState.mode === 'grid') {
+    for (const f of list) {
+      if (!f || typeof f !== 'object') continue;
+      const idx = cellIndexOfRect(f);
+      if (idx < 0) continue;
+      if (sheetState.emptyCells.has(idx)) continue;
+      next.push(cloneRect(f));
+    }
+  } else if (sheetState.mode === 'freepick') {
+    for (const f of list) {
+      if (!f || typeof f !== 'object') continue;
+      if (componentIdOfRect(f) < 0) continue;
+      next.push(cloneRect(f));
+    }
+  }
+  sheetState.sequence = next;
+  refreshDisplay();
+  emit();
+}
+
+function refreshDisplay() {
+  if (sheetState.mode === 'grid') syncCellsSelected();
+  if (sheetState.mode === 'freepick') rebuildFreepickSelection();
+}
+
+function syncCellsSelected() {
+  const positions = new Map();
+  sheetState.sequence.forEach((rect, i) => {
+    const idx = cellIndexOfRect(rect);
+    if (idx < 0) return;
+    if (!positions.has(idx)) positions.set(idx, []);
+    positions.get(idx).push(i + 1);
+  });
+  for (const cell of overlay.querySelectorAll('.cell')) {
+    const idx = Number(cell.dataset.index);
+    const list = positions.get(idx);
+    if (list) {
+      cell.classList.add('selected');
+      cell.dataset.order = list.join(',');
+    } else {
+      cell.classList.remove('selected');
+      delete cell.dataset.order;
+    }
+  }
+}
+
+function rebuildFreepickSelection() {
+  if (sheetState.mode !== 'freepick') return;
+  for (const el of overlay.querySelectorAll('.freepick-box')) el.remove();
+  if (!sheetState.components) return;
+  const W = sheetState.imageWidth || 1;
+  const H = sheetState.imageHeight || 1;
+  const positions = new Map();
+  sheetState.sequence.forEach((rect, i) => {
+    const id = componentIdOfRect(rect);
+    if (id < 0) return;
+    if (!positions.has(id)) positions.set(id, { rect, list: [] });
+    positions.get(id).list.push(i + 1);
+  });
+  for (const { rect: f, list } of positions.values()) {
+    const box = document.createElement('div');
+    box.className = 'freepick-box';
+    box.style.left = `${(f.x / W) * 100}%`;
+    box.style.top = `${(f.y / H) * 100}%`;
+    box.style.width = `${(f.w / W) * 100}%`;
+    box.style.height = `${(f.h / H) * 100}%`;
+    box.dataset.order = list.join(',');
+
+    const a = anchorOf(f, sheetState.anchorMode);
+    const dot = document.createElement('span');
+    dot.className = 'anchor-dot';
+    dot.style.left = `${(a.ax / Math.max(1, f.w)) * 100}%`;
+    dot.style.top = `${(a.ay / Math.max(1, f.h)) * 100}%`;
+    box.appendChild(dot);
+
+    overlay.appendChild(box);
   }
 }
 
@@ -317,6 +458,7 @@ function rebuildOverlay() {
       }
     }
     overlay.appendChild(frag);
+    syncCellsSelected();
   } else if (mode === 'freepick') {
     overlay.classList.remove('grid');
     overlay.classList.add('freepick');
@@ -328,66 +470,6 @@ function rebuildOverlay() {
     rebuildFreepickSelection();
   } else {
     overlay.style.display = 'none';
-  }
-  if (sheetState.mode === 'grid') syncCellsSelected();
-}
-
-function rebuildFreepickSelection() {
-  if (sheetState.mode !== 'freepick') return;
-  for (const el of overlay.querySelectorAll('.freepick-box')) el.remove();
-  if (!sheetState.components) return;
-  const W = sheetState.imageWidth || 1;
-  const H = sheetState.imageHeight || 1;
-  const counts = new Map();
-  for (const f of sheetState.freeSequence) {
-    const key = `${f.x},${f.y},${f.w},${f.h}`;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  const seen = new Set();
-  for (const f of sheetState.freeSequence) {
-    const key = `${f.x},${f.y},${f.w},${f.h}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const box = document.createElement('div');
-    box.className = 'freepick-box';
-    box.style.left = `${(f.x / W) * 100}%`;
-    box.style.top = `${(f.y / H) * 100}%`;
-    box.style.width = `${(f.w / W) * 100}%`;
-    box.style.height = `${(f.h / H) * 100}%`;
-
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    const n = counts.get(key);
-    badge.textContent = n > 1 ? `×${n}` : '';
-    box.appendChild(badge);
-
-    const a = anchorOf(f, sheetState.anchorMode);
-    const dot = document.createElement('span');
-    dot.className = 'anchor-dot';
-    dot.style.left = `${(a.ax / Math.max(1, f.w)) * 100}%`;
-    dot.style.top = `${(a.ay / Math.max(1, f.h)) * 100}%`;
-    box.appendChild(dot);
-
-    overlay.appendChild(box);
-  }
-}
-
-function syncCellsSelected() {
-  const positions = new Map();
-  sheetState.gridSequence.forEach((idx, i) => {
-    if (!positions.has(idx)) positions.set(idx, []);
-    positions.get(idx).push(i + 1);
-  });
-  for (const cell of overlay.querySelectorAll('.cell')) {
-    const idx = Number(cell.dataset.index);
-    const list = positions.get(idx);
-    if (list) {
-      cell.classList.add('selected');
-      cell.dataset.order = list.join(',');
-    } else {
-      cell.classList.remove('selected');
-      delete cell.dataset.order;
-    }
   }
 }
 
@@ -403,44 +485,6 @@ function relayout() {
   image.style.height = `${h}px`;
   overlay.style.width = `${w}px`;
   overlay.style.height = `${h}px`;
-}
-
-export function getSequence() {
-  return sheetState.mode === 'freepick'
-    ? sheetState.freeSequence.map(cloneFrame)
-    : sheetState.gridSequence.slice();
-}
-
-function cloneFrame(f) {
-  return { x: f.x, y: f.y, w: f.w, h: f.h, cx: f.cx, cy: f.cy };
-}
-
-export function setSequence(frames) {
-  if (sheetState.mode === 'freepick') {
-    sheetState.freeSequence = (frames || [])
-      .filter((f) => f && Number.isFinite(f.x) && Number.isFinite(f.y) && f.w > 0 && f.h > 0)
-      .map((f) => ({
-        x: f.x | 0,
-        y: f.y | 0,
-        w: f.w | 0,
-        h: f.h | 0,
-        cx: Number.isFinite(f.cx) ? f.cx : f.x + f.w / 2,
-        cy: Number.isFinite(f.cy) ? f.cy : f.y + f.h / 2,
-      }));
-    rebuildFreepickSelection();
-  } else {
-    const total = sheetState.columns * sheetState.rows;
-    const valid = [];
-    for (const i of (frames || [])) {
-      const n = i | 0;
-      if (n < 0 || n >= total) continue;
-      if (sheetState.emptyCells.has(n)) continue;
-      valid.push(n);
-    }
-    sheetState.gridSequence = valid;
-    syncCellsSelected();
-  }
-  emit();
 }
 
 function emit() {
@@ -594,10 +638,10 @@ function onPointerUp(e) {
       const x2 = Math.max(dragStart.x, e.clientX);
       const y2 = Math.max(dragStart.y, e.clientY);
       const indices = boxCellIndices(x1, y1, x2, y2);
-      if (indices.length) appendGrid(indices);
+      if (indices.length) appendGridIndices(indices);
     } else {
       const idx = cellIndexAtPoint(e.clientX, e.clientY);
-      if (idx >= 0 && !sheetState.emptyCells.has(idx)) appendGrid([idx]);
+      if (idx >= 0 && !sheetState.emptyCells.has(idx)) appendGridIndices([idx]);
     }
   } else if (sheetState.mode === 'freepick') {
     if (dragStarted) {
@@ -606,10 +650,10 @@ function onPointerUp(e) {
       const x2 = Math.max(dragStart.x, e.clientX);
       const y2 = Math.max(dragStart.y, e.clientY);
       const comps = boxComponents(x1, y1, x2, y2);
-      if (comps.length) appendFreepick(comps);
+      if (comps.length) appendComponents(comps);
     } else {
       const comp = pickComponent(e.clientX, e.clientY);
-      if (comp) appendFreepick([comp]);
+      if (comp) appendComponents([comp]);
     }
   }
   dragStarted = false;
@@ -629,50 +673,43 @@ function onContextMenu(e) {
   }
 }
 
-function appendGrid(indices) {
-  const total = sheetState.columns * sheetState.rows;
-  const next = sheetState.gridSequence.slice();
-  for (const i of indices) {
-    const n = i | 0;
-    if (n < 0 || n >= total) continue;
-    if (sheetState.emptyCells.has(n)) continue;
-    next.push(n);
+function appendGridIndices(indices) {
+  const next = sheetState.sequence.slice();
+  for (const idx of indices) {
+    const r = rectFromCellIndex(idx);
+    if (r) next.push(r);
   }
-  sheetState.gridSequence = next;
+  sheetState.sequence = next;
   syncCellsSelected();
   emit();
 }
 
 function removeLastGrid(idx) {
-  const next = sheetState.gridSequence.slice();
+  const next = sheetState.sequence.slice();
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i] === idx) { next.splice(i, 1); break; }
+    if (cellIndexOfRect(next[i]) === idx) { next.splice(i, 1); break; }
   }
-  sheetState.gridSequence = next;
+  sheetState.sequence = next;
   syncCellsSelected();
   emit();
 }
 
-function appendFreepick(comps) {
-  const next = sheetState.freeSequence.slice();
+function appendComponents(comps) {
+  const next = sheetState.sequence.slice();
   for (const c of comps) {
     next.push({ x: c.x, y: c.y, w: c.w, h: c.h, cx: c.cx, cy: c.cy });
   }
-  sheetState.freeSequence = next;
+  sheetState.sequence = next;
   rebuildFreepickSelection();
   emit();
 }
 
-function sameRect(a, b) {
-  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
-}
-
 function removeLastFreepick(comp) {
-  const next = sheetState.freeSequence.slice();
+  const next = sheetState.sequence.slice();
   for (let i = next.length - 1; i >= 0; i--) {
     if (sameRect(next[i], comp)) { next.splice(i, 1); break; }
   }
-  sheetState.freeSequence = next;
+  sheetState.sequence = next;
   rebuildFreepickSelection();
   emit();
 }
@@ -689,3 +726,4 @@ export function getSheetGrid() {
 
 export function getMode() { return sheetState.mode; }
 export function getAnchorMode() { return sheetState.anchorMode; }
+export function getComponentInfo() { return sheetState.components; }

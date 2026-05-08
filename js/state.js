@@ -1,5 +1,5 @@
 export const STORAGE_KEY = 'sprite-animator:v1';
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const ANCHOR_MODES = ['bottom-center', 'bbox-center', 'top-center', 'centroid'];
 export const DEFAULT_ANCHOR = 'bottom-center';
@@ -22,7 +22,7 @@ export function emptyAnimEditor(kind = 'grid') {
     id: null,
     kind,
     name: '',
-    frames: [],
+    frames: [], // always rect[]: { x, y, w, h, cx, cy }
     anchorMode: DEFAULT_ANCHOR,
     fps: 8,
     loop: true,
@@ -105,30 +105,35 @@ export function serialize() {
   return { version: SCHEMA_VERSION, sheets };
 }
 
+function cloneRectFrame(f) {
+  return {
+    x: f.x | 0,
+    y: f.y | 0,
+    w: f.w | 0,
+    h: f.h | 0,
+    cx: Number.isFinite(f.cx) ? f.cx : (f.x | 0) + (f.w | 0) / 2,
+    cy: Number.isFinite(f.cy) ? f.cy : (f.y | 0) + (f.h | 0) / 2,
+  };
+}
+
 export function cloneAnimation(a) {
+  const kind = a.kind === 'freepick' ? 'freepick' : 'grid';
   const base = {
     id: a.id,
+    kind,
     name: a.name,
     fps: a.fps,
     loop: !!a.loop,
     pingpong: !!a.pingpong,
+    anchorMode: a.anchorMode || DEFAULT_ANCHOR,
   };
-  if (a.kind === 'freepick') {
-    return {
-      ...base,
-      kind: 'freepick',
-      anchorMode: a.anchorMode || DEFAULT_ANCHOR,
-      frames: a.frames.map((f) => ({
-        x: f.x | 0, y: f.y | 0, w: f.w | 0, h: f.h | 0,
-        ax: Number(f.ax) || 0, ay: Number(f.ay) || 0,
-      })),
-    };
+  // frames may be int[] (legacy grid, pre-materialization) or rect[]
+  if (Array.isArray(a.frames) && a.frames.length && typeof a.frames[0] === 'object') {
+    base.frames = a.frames.map(cloneRectFrame);
+  } else {
+    base.frames = (a.frames || []).map((n) => Number(n) | 0).filter((n) => n >= 0);
   }
-  return {
-    ...base,
-    kind: 'grid',
-    frames: a.frames.slice(),
-  };
+  return base;
 }
 
 export function loadFromStorage() {
@@ -169,8 +174,35 @@ export function migrate(payload) {
     }
     v = 3;
   }
+  // v3 -> v4: frames stored as rects. Conversion needs image dims, so it
+  // happens lazily in materializeGridAnimations() once a sheet is opened.
+  if (v < 4) v = 4;
   payload.version = v;
   return payload;
+}
+
+export function materializeGridAnimations(sheet, img) {
+  if (!sheet || !Array.isArray(sheet.animations) || !img) return false;
+  const cw = sheet.cellWidth | 0;
+  const ch = sheet.cellHeight | 0;
+  if (cw <= 0 || ch <= 0) return false;
+  const cols = Math.max(1, Math.floor(img.naturalWidth / cw));
+  let changed = false;
+  for (const a of sheet.animations) {
+    if (a.kind !== 'grid') continue;
+    if (!Array.isArray(a.frames) || a.frames.length === 0) continue;
+    if (typeof a.frames[0] === 'object') continue;
+    a.frames = a.frames.map((idx) => {
+      const i = idx | 0;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = col * cw;
+      const y = row * ch;
+      return { x, y, w: cw, h: ch, cx: x + cw / 2, cy: y + ch / 2 };
+    });
+    changed = true;
+  }
+  return changed;
 }
 
 export function clearStorage() {
@@ -191,22 +223,22 @@ function normalizeAnimation(a) {
     fps: Number(a.fps) || 8,
     loop: a.loop !== false,
     pingpong: !!a.pingpong,
+    anchorMode: ANCHOR_MODES.includes(a.anchorMode) ? a.anchorMode : DEFAULT_ANCHOR,
   });
-  if (kind === 'freepick') {
-    base.anchorMode = ANCHOR_MODES.includes(a.anchorMode) ? a.anchorMode : DEFAULT_ANCHOR;
-    base.frames = Array.isArray(a.frames)
-      ? a.frames
-          .filter((f) => f && typeof f === 'object')
-          .map((f) => ({
-            x: Number(f.x) | 0,
-            y: Number(f.y) | 0,
-            w: Math.max(0, Number(f.w) | 0),
-            h: Math.max(0, Number(f.h) | 0),
-            ax: Number(f.ax) || 0,
-            ay: Number(f.ay) || 0,
-          }))
-      : [];
+  if (Array.isArray(a.frames) && a.frames.length && typeof a.frames[0] === 'object') {
+    base.frames = a.frames
+      .filter((f) => f && typeof f === 'object')
+      .map((f) => {
+        const x = Number(f.x) | 0;
+        const y = Number(f.y) | 0;
+        const w = Math.max(0, Number(f.w) | 0);
+        const h = Math.max(0, Number(f.h) | 0);
+        const cx = Number.isFinite(f.cx) ? Number(f.cx) : x + w / 2;
+        const cy = Number.isFinite(f.cy) ? Number(f.cy) : y + h / 2;
+        return { x, y, w, h, cx, cy };
+      });
   } else {
+    // legacy grid int frames; will be materialized once the sheet image is loaded
     base.frames = Array.isArray(a.frames)
       ? a.frames.map((n) => Number(n) | 0).filter((n) => n >= 0)
       : [];

@@ -26,10 +26,6 @@ export function computeEnvelope(frames, anchorMode) {
 export function createPlayer(canvas) {
   const ctx = canvas.getContext('2d');
   let img = null;
-  let kind = 'grid';
-  let cellWidth = 128;
-  let cellHeight = 128;
-  let columns = 1;
   let envelope = null;
   let anchorMode = 'bottom-center';
   let sequence = [];
@@ -42,61 +38,38 @@ export function createPlayer(canvas) {
   let rafId = 0;
   let onStop = null;
 
-  function setSheet({ image, kind: k = 'grid', cellW, cellH, cols }) {
+  function setSheet({ image }) {
     img = image;
-    kind = k;
-    if (kind === 'grid') {
-      cellWidth = cellW;
-      cellHeight = cellH;
-      columns = cols;
-      canvas.width = Math.max(1, cellW || 1);
-      canvas.height = Math.max(1, cellH || 1);
-    }
     drawCurrent();
   }
 
   function setAnimation(anim) {
-    kind = anim.kind === 'freepick' ? 'freepick' : 'grid';
     sequence = expandSequence(anim.frames || [], anim.pingpong);
     fps = Math.max(1, anim.fps || 8);
     loop = anim.loop !== false;
+    anchorMode = anim.anchorMode || 'bottom-center';
     cursor = 0;
     acc = 0;
-    if (kind === 'freepick') {
-      anchorMode = anim.anchorMode || 'bottom-center';
+    if (sequence.length) {
       envelope = computeEnvelope(sequence, anchorMode);
       canvas.width = envelope.width;
       canvas.height = envelope.height;
     } else {
       envelope = null;
-      canvas.width = Math.max(1, cellWidth || 1);
-      canvas.height = Math.max(1, cellHeight || 1);
+      canvas.width = 1;
+      canvas.height = 1;
     }
     drawCurrent();
   }
 
   function drawCurrent() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!img || sequence.length === 0) return;
-    const idx = Math.min(cursor, sequence.length - 1);
-    if (kind === 'freepick') {
-      if (!envelope) return;
-      const f = sequence[idx];
-      const a = anchorOf(f, anchorMode);
-      const dx = envelope.leftPad - a.ax;
-      const dy = envelope.topPad - a.ay;
-      ctx.drawImage(img, f.x, f.y, f.w, f.h, dx, dy, f.w, f.h);
-    } else {
-      if (columns <= 0) return;
-      const cellIdx = sequence[idx];
-      const c = cellIdx % columns;
-      const r = Math.floor(cellIdx / columns);
-      ctx.drawImage(
-        img,
-        c * cellWidth, r * cellHeight, cellWidth, cellHeight,
-        0, 0, canvas.width, canvas.height,
-      );
-    }
+    if (!img || sequence.length === 0 || !envelope) return;
+    const f = sequence[Math.min(cursor, sequence.length - 1)];
+    const a = anchorOf(f, anchorMode);
+    const dx = envelope.leftPad - a.ax;
+    const dy = envelope.topPad - a.ay;
+    ctx.drawImage(img, f.x, f.y, f.w, f.h, dx, dy, f.w, f.h);
   }
 
   function tick(ts) {
