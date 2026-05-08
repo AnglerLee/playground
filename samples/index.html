@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sprite Animator — Playback Sample</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1c1f24; color: #e6e9ef; margin: 0; padding: 20px; }
+    h1 { font-size: 1.2rem; margin: 0 0 12px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    button, input[type=file] { font: inherit; }
+    .stage { display: flex; flex-wrap: wrap; gap: 24px; }
+    .anim {
+      background: #262a31; border: 1px solid #3a4049; border-radius: 8px;
+      padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .anim canvas {
+      background: repeating-conic-gradient(#2a2e36 0% 25%, #232730 0% 50%) 0 0 / 12px 12px;
+      image-rendering: pixelated; max-width: 256px; max-height: 256px;
+    }
+    .anim .meta { color: #8a93a3; font-size: 0.85em; }
+    a { color: #6aa0ff; }
+    code { background: #15181d; padding: 1px 5px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>Sprite Animator — Playback Sample</h1>
+  <p class="muted">
+    Loads <code>example.json</code> by default. Use the picker to play any
+    file produced by the controller's <em>Export JSON</em> button. See
+    <a href="./playback.js">playback.js</a> and <a href="./README.md">README</a>.
+  </p>
+  <div class="row">
+    <label>JSON: <input type="file" id="json-input" accept="application/json,.json" /></label>
+    <button id="reload-default" type="button">Reload example.json</button>
+  </div>
+  <div id="stage" class="stage"></div>
+
+  <script type="module">
+    import { createPlayer, loadDocument, loadImage } from './playback.js';
+
+    const stage = document.getElementById('stage');
+
+    function renderAll(sheet, image, sourceLabel) {
+      stage.innerHTML = '';
+      const heading = document.createElement('div');
+      heading.style.flexBasis = '100%';
+      heading.innerHTML = `<strong>${sourceLabel}</strong> — sheet: <code>${sheet.src}</code>, mode: <code>${sheet.mode}</code>`;
+      stage.appendChild(heading);
+
+      for (const anim of sheet.animations) {
+        const cell = document.createElement('div');
+        cell.className = 'anim';
+        const canvas = document.createElement('canvas');
+        cell.appendChild(canvas);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const tags = [`${anim.frames.length}f`, `${anim.fps}fps`, anim.kind, anim.anchorMode];
+        if (anim.loop) tags.push('loop');
+        if (anim.pingpong) tags.push('pingpong');
+        meta.textContent = `${anim.name} — ${tags.join(' · ')}`;
+        cell.appendChild(meta);
+        stage.appendChild(cell);
+        const player = createPlayer(canvas, image, anim);
+        player.play();
+      }
+    }
+
+    async function loadDefault() {
+      try {
+        const { name, sheet, image } = await loadDocument('./example.json');
+        renderAll(sheet, image, name);
+      } catch (err) {
+        stage.innerHTML = `<div style="color:#e3504f">Failed to load example.json: ${err.message}</div>`;
+      }
+    }
+
+    document.getElementById('reload-default').addEventListener('click', loadDefault);
+
+    document.getElementById('json-input').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const doc = JSON.parse(text);
+        const [name, sheet] = Object.entries(doc.sheets || {})[0] || [];
+        if (!sheet) throw new Error('Document has no sheet');
+        // src may be a data URL or a relative path. Relative paths resolve
+        // against the picked file's parent directory, which we cannot know
+        // in a browser; the user must place a sibling image or use absolute
+        // URLs / data URLs in their export.
+        const url = sheet.src.startsWith('data:') || /^https?:/.test(sheet.src)
+          ? sheet.src
+          : new URL(sheet.src, location.href).toString();
+        const image = await loadImage(url);
+        renderAll(sheet, image, name + ' (from file)');
+      } catch (err) {
+        stage.innerHTML = `<div style="color:#e3504f">${err.message}</div>`;
+      }
+      e.target.value = '';
+    });
+
+    loadDefault();
+  </script>
+</body>
+</html>

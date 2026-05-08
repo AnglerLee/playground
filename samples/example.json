@@ -1,0 +1,46 @@
+{
+  "version": 4,
+  "sheets": {
+    "cat": {
+      "src": "../images/cat.png",
+      "origin": "sample",
+      "persistImage": false,
+      "cellWidth": 128,
+      "cellHeight": 128,
+      "mode": "grid",
+      "anchorMode": "bottom-center",
+      "animations": [
+        {
+          "id": "a_idle",
+          "kind": "grid",
+          "name": "idle",
+          "fps": 4,
+          "loop": true,
+          "pingpong": true,
+          "anchorMode": "bottom-center",
+          "frames": [
+            { "x": 0,   "y": 0, "w": 128, "h": 128, "cx": 64,  "cy": 64 },
+            { "x": 128, "y": 0, "w": 128, "h": 128, "cx": 192, "cy": 64 },
+            { "x": 256, "y": 0, "w": 128, "h": 128, "cx": 320, "cy": 64 },
+            { "x": 384, "y": 0, "w": 128, "h": 128, "cx": 448, "cy": 64 }
+          ]
+        },
+        {
+          "id": "a_walk",
+          "kind": "grid",
+          "name": "walk",
+          "fps": 8,
+          "loop": true,
+          "pingpong": false,
+          "anchorMode": "bottom-center",
+          "frames": [
+            { "x": 0,   "y": 256, "w": 128, "h": 128, "cx": 64,  "cy": 320 },
+            { "x": 128, "y": 256, "w": 128, "h": 128, "cx": 192, "cy": 320 },
+            { "x": 256, "y": 256, "w": 128, "h": 128, "cx": 320, "cy": 320 },
+            { "x": 384, "y": 256, "w": 128, "h": 128, "cx": 448, "cy": 320 }
+          ]
+        }
+      ]
+    }
+  }
+}
