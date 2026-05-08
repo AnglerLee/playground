@@ -162,6 +162,54 @@ input[type="number"] { width: 6em; }
   pointer-events: none;
 }
 
+.grid-overlay.freepick {
+  display: block;
+}
+.grid-overlay.freepick .cell { display: none; }
+
+.freepick-hover {
+  position: absolute;
+  border: 2px dashed #4ec9c0;
+  background: rgba(78, 201, 192, 0.10);
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 4;
+}
+.freepick-hover.hidden { display: none; }
+
+.freepick-box {
+  position: absolute;
+  border: 2px solid var(--accent-2);
+  background: rgba(76, 139, 245, 0.15);
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 3;
+}
+.freepick-box::after {
+  content: attr(data-order);
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  right: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 0 2px #000;
+  pointer-events: none;
+  word-break: break-all;
+  line-height: 1.05;
+}
+.freepick-box .anchor-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5252;
+  box-shadow: 0 0 0 2px #fff, 0 0 4px #000;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .drag-box {
   position: absolute;
   border: 1px dashed var(--accent-2);

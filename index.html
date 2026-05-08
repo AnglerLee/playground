@@ -13,6 +13,22 @@
         Sheet
         <select id="sheet-select"></select>
       </label>
+      <span class="field" role="radiogroup" aria-label="Selection mode">
+        Mode
+        <label class="check"><input type="radio" name="mode" id="mode-grid" value="grid" checked /> Grid</label>
+        <label class="check"><input type="radio" name="mode" id="mode-freepick" value="freepick" /> Freepick</label>
+      </span>
+      <label class="field" id="anchor-field">
+        Anchor
+        <select id="anchor-select">
+          <option value="bottom-center">bottom-center</option>
+          <option value="bbox-center">bbox-center</option>
+          <option value="top-center">top-center</option>
+          <option value="centroid">centroid</option>
+        </select>
+      </label>
+    </div>
+    <div class="toolbar-row" id="grid-row">
       <label class="field">
         Cell W
         <input id="cell-width" type="number" min="1" step="1" value="128" />
@@ -67,8 +83,8 @@
           <input id="anim-pingpong" type="checkbox" /> pingpong
         </label>
       </div>
-      <label class="field block">
-        Frames (comma-separated)
+      <label class="field block" id="frames-field">
+        Frames
         <input id="anim-frames" type="text" placeholder="0,1,2,3" />
       </label>
       <div class="preview-wrap">
@@ -84,7 +100,8 @@
         <button id="clear-selection" type="button">Clear selection</button>
         <button id="new-anim" type="button">New</button>
       </div>
-      <p class="hint muted">Click cells (or drag a box) to append to the sequence. Right-click a cell to remove its last occurrence. Empty cells are disabled.</p>
+      <p class="hint muted" id="hint-grid">Grid mode: click/drag cells to append to the sequence. Right-click a cell to remove its last occurrence.</p>
+      <p class="hint muted hidden" id="hint-freepick">Freepick mode: click a sprite to auto-detect its bounds and append. Right-click removes the last occurrence. Anchor controls how variable-size frames are aligned in playback.</p>
     </aside>
 
     <section class="list-pane">

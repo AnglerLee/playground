@@ -1,10 +1,16 @@
 import {
   state, emptySheetMeta, emptyAnimEditor, ensureAnimId,
   loadFromStorage, applyLoaded, clearStorage, notify, saveNow, autoCellSize,
+  materializeGridAnimations,
+  DEFAULT_ANCHOR, DEFAULT_SHEET_MODE, ANCHOR_MODES, SHEET_MODES,
 } from './state.js';
 import {
   initSheetView, setSelectionListener,
-  showSheet, setSequence, loadImage, clearEmptyCellCache,
+  showSheet, setMode as sheetSetMode, setAnchorMode as sheetSetAnchorMode,
+  setSequence, loadImage, clearEmptyCellCache,
+  rectFromCellIndex, cellIndexOfRect,
+  rectFromComponentId, componentIdOfRect,
+  getComponentInfo,
 } from './sheet.js';
 import { createPlayer } from './preview.js';
 import {
@@ -16,6 +22,10 @@ const DATA_URL_WARN_BYTES = 4 * 1024 * 1024;
 
 const els = {
   sheetSelect: document.getElementById('sheet-select'),
+  modeGrid: document.getElementById('mode-grid'),
+  modeFreepick: document.getElementById('mode-freepick'),
+  anchorSelect: document.getElementById('anchor-select'),
+  gridRow: document.getElementById('grid-row'),
   cellWidth: document.getElementById('cell-width'),
   cellHeight: document.getElementById('cell-height'),
   applyCell: document.getElementById('apply-cell'),
@@ -42,6 +52,9 @@ const els = {
   animLoop: document.getElementById('anim-loop'),
   animPingpong: document.getElementById('anim-pingpong'),
   animFrames: document.getElementById('anim-frames'),
+  framesField: document.getElementById('frames-field'),
+  hintGrid: document.getElementById('hint-grid'),
+  hintFreepick: document.getElementById('hint-freepick'),
 
   previewCanvas: document.getElementById('preview-canvas'),
   previewPlay: document.getElementById('preview-play'),
@@ -131,6 +144,17 @@ function populateSheetSelect() {
   }
 }
 
+function syncToolbarFromSheet(sheet) {
+  const mode = sheet?.mode || DEFAULT_SHEET_MODE;
+  const anchor = sheet?.anchorMode || DEFAULT_ANCHOR;
+  els.modeGrid.checked = mode === 'grid';
+  els.modeFreepick.checked = mode === 'freepick';
+  els.anchorSelect.value = anchor;
+  els.gridRow.classList.toggle('hidden', mode !== 'grid');
+  els.hintGrid.classList.toggle('hidden', mode !== 'grid');
+  els.hintFreepick.classList.toggle('hidden', mode !== 'freepick');
+}
+
 async function selectSheet(name) {
   const sheet = state.sheets[name];
   if (!sheet) {
@@ -140,7 +164,11 @@ async function selectSheet(name) {
   }
   state.ui.activeSheet = name;
   els.sheetSelect.value = name;
-  state.ui.editing = emptyAnimEditor();
+  if (!sheet.mode) sheet.mode = DEFAULT_SHEET_MODE;
+  if (!sheet.anchorMode) sheet.anchorMode = DEFAULT_ANCHOR;
+  state.ui.editing = emptyAnimEditor(sheet.mode);
+  state.ui.editing.anchorMode = sheet.anchorMode;
+  syncToolbarFromSheet(sheet);
 
   if (!sheet.src) {
     els.cellWidth.value = sheet.cellWidth || '';
@@ -170,33 +198,45 @@ async function selectSheet(name) {
   }
   els.cellWidth.value = sheet.cellWidth;
   els.cellHeight.value = sheet.cellHeight;
+
+  // Convert legacy int-frames grid animations to rect[] now that image is available.
+  if (materializeGridAnimations(sheet, img)) saveNow();
+
   syncEditorInputs();
 
   let result;
   try {
+    setBusy(sheet.mode === 'freepick');
     result = await showSheet({
       src: sheet.src,
+      mode: sheet.mode,
       cellWidth: sheet.cellWidth,
       cellHeight: sheet.cellHeight,
+      anchorMode: sheet.anchorMode,
     });
   } catch (err) {
     console.error(err);
     renderEmptyState('Failed to load image.');
     return;
+  } finally {
+    setBusy(false);
   }
   if (result) {
     currentImage = result.image;
-    els.gridInfo.textContent = `Image ${result.width}×${result.height} → ${result.columns}×${result.rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`;
-    player.setSheet({
-      image: currentImage,
-      cellW: sheet.cellWidth,
-      cellH: sheet.cellHeight,
-      cols: result.columns,
-    });
+    const gridDesc = sheet.mode === 'grid' && result.columns > 0 && result.rows > 0
+      ? `${result.columns}×${result.rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`
+      : sheet.mode === 'freepick' ? 'freepick' : '—';
+    els.gridInfo.textContent = `Image ${result.width}×${result.height} → ${gridDesc}`;
+    player.setSheet({ image: currentImage });
   }
   renderAnimList();
   applyEditorPreview();
   notify();
+}
+
+function setBusy(on) {
+  if (on) els.gridInfo.textContent = 'Analyzing…';
+  document.body.style.cursor = on ? 'progress' : '';
 }
 
 function renderEmptyState(message) {
@@ -210,12 +250,20 @@ function renderEmptyState(message) {
   renderAnimList();
 }
 
-function onSelectionChanged(indices) {
+function onSelectionChanged(rects) {
   const ed = state.ui.editing;
-  ed.frames = indices.slice();
-  els.animFrames.value = indices.join(',');
+  ed.frames = rects;
+  els.animFrames.value = framesToInputString(ed);
   applyEditorPreview();
   notify();
+}
+
+function framesToInputString(ed) {
+  if (!ed.frames.length) return '';
+  if (ed.kind === 'freepick') {
+    return ed.frames.map((f) => String(componentIdOfRect(f) || '?')).join(',');
+  }
+  return ed.frames.map((f) => String(cellIndexOfRect(f))).join(',');
 }
 
 function syncEditorInputs() {
@@ -224,7 +272,7 @@ function syncEditorInputs() {
   els.animFps.value = ed.fps;
   els.animLoop.checked = !!ed.loop;
   els.animPingpong.checked = !!ed.pingpong;
-  els.animFrames.value = ed.frames.join(',');
+  els.animFrames.value = framesToInputString(ed);
   setSequence(ed.frames);
   applyEditorPreview();
 }
@@ -233,17 +281,18 @@ function applyEditorPreview() {
   const ed = state.ui.editing;
   player.setAnimation({
     frames: ed.frames,
+    anchorMode: ed.anchorMode,
     pingpong: ed.pingpong,
     fps: ed.fps,
     loop: ed.loop,
   });
   els.previewInfo.textContent = ed.frames.length
-    ? `${ed.frames.length}f @ ${ed.fps}fps`
+    ? `${ed.frames.length}f @ ${ed.fps}fps · ${ed.kind === 'freepick' ? ed.anchorMode : 'grid'}`
     : 'no frames';
   if (ed.frames.length && !player.isPlaying()) player.play();
 }
 
-function parseFrameInput(value) {
+function parseIdsString(value) {
   return value
     .split(/[\s,]+/)
     .map((s) => s.trim())
@@ -253,8 +302,28 @@ function parseFrameInput(value) {
     .map((n) => n | 0);
 }
 
+function idsToFrames(ids, kind) {
+  const out = [];
+  if (kind === 'freepick') {
+    for (const id of ids) {
+      const r = rectFromComponentId(id);
+      if (r) out.push(r);
+    }
+  } else {
+    for (const id of ids) {
+      const r = rectFromCellIndex(id);
+      if (r) out.push(r);
+    }
+  }
+  return out;
+}
+
 function wireEvents() {
   els.sheetSelect.addEventListener('change', () => selectSheet(els.sheetSelect.value));
+
+  els.modeGrid.addEventListener('change', () => onModeChange('grid'));
+  els.modeFreepick.addEventListener('change', () => onModeChange('freepick'));
+  els.anchorSelect.addEventListener('change', () => onAnchorChange(els.anchorSelect.value));
 
   els.applyCell.addEventListener('click', applyCellSize);
   els.cellWidth.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyCellSize(); });
@@ -275,7 +344,11 @@ function wireEvents() {
     if (file) await handleImport(file);
     els.importInput.value = '';
   });
-  els.exportBtn.addEventListener('click', () => downloadJSON());
+  els.exportBtn.addEventListener('click', () => {
+    const name = state.ui.activeSheet;
+    if (!name) { alert('No sheet selected.'); return; }
+    downloadJSON(name);
+  });
   els.resetBtn.addEventListener('click', resetAll);
 
   els.animName.addEventListener('input', () => { state.ui.editing.name = els.animName.value; notify(); });
@@ -295,8 +368,10 @@ function wireEvents() {
     notify();
   });
   els.animFrames.addEventListener('change', () => {
-    const frames = parseFrameInput(els.animFrames.value);
-    state.ui.editing.frames = frames;
+    const ed = state.ui.editing;
+    const ids = parseIdsString(els.animFrames.value);
+    const frames = idsToFrames(ids, ed.kind);
+    ed.frames = frames;
     setSequence(frames);
     applyEditorPreview();
     notify();
@@ -313,7 +388,9 @@ function wireEvents() {
     notify();
   });
   els.newAnim.addEventListener('click', () => {
-    state.ui.editing = emptyAnimEditor();
+    const sheet = getActiveSheet();
+    state.ui.editing = emptyAnimEditor(sheet?.mode || DEFAULT_SHEET_MODE);
+    state.ui.editing.anchorMode = sheet?.anchorMode || DEFAULT_ANCHOR;
     syncEditorInputs();
     notify();
   });
@@ -321,15 +398,58 @@ function wireEvents() {
   setupDragAndDrop();
 }
 
+async function onModeChange(newMode) {
+  if (!SHEET_MODES.includes(newMode)) return;
+  const sheet = getActiveSheet();
+  if (!sheet) return;
+  if (sheet.mode === newMode) return;
+  sheet.mode = newMode;
+  state.ui.editing = emptyAnimEditor(newMode);
+  state.ui.editing.anchorMode = sheet.anchorMode || DEFAULT_ANCHOR;
+  syncToolbarFromSheet(sheet);
+  syncEditorInputs();
+  setBusy(newMode === 'freepick');
+  try {
+    await sheetSetMode(newMode);
+  } finally {
+    setBusy(false);
+  }
+  if (sheet.mode === 'grid' && currentImage) {
+    const cols = Math.floor(currentImage.naturalWidth / sheet.cellWidth);
+    const rows = Math.floor(currentImage.naturalHeight / sheet.cellHeight);
+    els.gridInfo.textContent = `Image ${currentImage.naturalWidth}×${currentImage.naturalHeight} → ${cols}×${rows} grid (cell ${sheet.cellWidth}×${sheet.cellHeight})`;
+  } else if (sheet.mode === 'freepick' && currentImage) {
+    const info = getComponentInfo();
+    const n = info?.components?.length || 0;
+    els.gridInfo.textContent = `Image ${currentImage.naturalWidth}×${currentImage.naturalHeight} → freepick (${n} sprites)`;
+  }
+  renderAnimList();
+  applyEditorPreview();
+  notify();
+}
+
+function onAnchorChange(newAnchor) {
+  if (!ANCHOR_MODES.includes(newAnchor)) return;
+  const sheet = getActiveSheet();
+  if (!sheet) return;
+  sheet.anchorMode = newAnchor;
+  state.ui.editing.anchorMode = newAnchor;
+  sheetSetAnchorMode(newAnchor);
+  applyEditorPreview();
+  notify();
+}
+
 function applyCellSize() {
   const sheet = getActiveSheet();
   if (!sheet) return;
+  if (sheet.mode !== 'grid') return;
   const w = Math.max(1, Math.floor(Number(els.cellWidth.value) || 1));
   const h = Math.max(1, Math.floor(Number(els.cellHeight.value) || 1));
   if (w === sheet.cellWidth && h === sheet.cellHeight) return;
-  if (sheet.animations.length) {
+  const gridAnims = sheet.animations.filter((a) => (a.kind || 'grid') === 'grid');
+  if (gridAnims.length) {
     const ok = confirm(
-      `Changing cell size may invalidate frame indices in ${sheet.animations.length} saved animation(s) for "${state.ui.activeSheet}". Continue?`,
+      `Changing cell size may invalidate frames in ${gridAnims.length} grid animation(s) for "${state.ui.activeSheet}". Continue?`,
     );
     if (!ok) {
       els.cellWidth.value = sheet.cellWidth;
@@ -340,6 +460,10 @@ function applyCellSize() {
   sheet.cellWidth = w;
   sheet.cellHeight = h;
   clearEmptyCellCache(sheet.src);
+  // Existing rect frames may no longer align — drop them so user re-picks
+  for (const a of sheet.animations) {
+    if ((a.kind || 'grid') === 'grid') a.frames = [];
+  }
   selectSheet(state.ui.activeSheet);
 }
 
@@ -434,28 +558,31 @@ function saveAnimation() {
   if (!name) { alert('Animation name is required.'); return; }
   if (!ed.frames.length) { alert('Select at least one frame.'); return; }
   const fps = Math.max(1, Number(ed.fps) || 1);
+  const kind = ed.kind === 'freepick' ? 'freepick' : 'grid';
 
   let target = ed.id ? sheet.animations.find((a) => a.id === ed.id) : null;
   if (!target) {
     const dup = sheet.animations.find((a) => a.name === name);
     if (dup) target = dup;
   }
+  const payload = {
+    name,
+    kind,
+    fps,
+    loop: !!ed.loop,
+    pingpong: !!ed.pingpong,
+    anchorMode: ed.anchorMode || sheet.anchorMode || DEFAULT_ANCHOR,
+    frames: ed.frames.map((f) => ({
+      x: f.x | 0, y: f.y | 0, w: f.w | 0, h: f.h | 0,
+      cx: f.cx, cy: f.cy,
+    })),
+  };
+
   if (target) {
-    target.name = name;
-    target.frames = ed.frames.slice();
-    target.fps = fps;
-    target.loop = !!ed.loop;
-    target.pingpong = !!ed.pingpong;
+    Object.assign(target, payload);
     ed.id = target.id;
   } else {
-    const created = ensureAnimId({
-      id: null,
-      name,
-      frames: ed.frames.slice(),
-      fps,
-      loop: !!ed.loop,
-      pingpong: !!ed.pingpong,
-    });
+    const created = ensureAnimId({ id: null, ...payload });
     sheet.animations.push(created);
     ed.id = created.id;
   }
@@ -463,15 +590,34 @@ function saveAnimation() {
   notify();
 }
 
-function loadAnimIntoEditor(anim) {
+async function loadAnimIntoEditor(anim) {
+  const sheet = getActiveSheet();
+  if (!sheet) return;
+  const kind = anim.kind === 'freepick' ? 'freepick' : 'grid';
+  if (sheet.mode !== kind) {
+    sheet.mode = kind;
+    syncToolbarFromSheet(sheet);
+    setBusy(kind === 'freepick');
+    try { await sheetSetMode(kind); } finally { setBusy(false); }
+  }
+  // Defensive: ensure frames are rect[] (should already be after materialize)
+  const frames = Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object'
+    ? anim.frames.map((f) => ({ ...f }))
+    : [];
   state.ui.editing = {
     id: anim.id,
+    kind,
     name: anim.name,
-    frames: anim.frames.slice(),
+    frames,
+    anchorMode: anim.anchorMode || sheet.anchorMode || DEFAULT_ANCHOR,
     fps: anim.fps,
     loop: !!anim.loop,
     pingpong: !!anim.pingpong,
   };
+  if (kind === 'freepick') {
+    els.anchorSelect.value = state.ui.editing.anchorMode;
+    sheetSetAnchorMode(state.ui.editing.anchorMode);
+  }
   syncEditorInputs();
   notify();
 }
@@ -489,10 +635,11 @@ function renderAnimList() {
   for (const anim of sheet.animations) {
     const li = document.createElement('li');
     li.className = 'anim-card' + (state.ui.editing.id === anim.id ? ' active' : '');
+    const kind = anim.kind === 'freepick' ? 'freepick' : 'grid';
 
     const canvas = document.createElement('canvas');
-    canvas.width = sheet.cellWidth;
-    canvas.height = sheet.cellHeight;
+    canvas.width = sheet.cellWidth || 64;
+    canvas.height = sheet.cellHeight || 64;
     li.appendChild(canvas);
 
     const meta = document.createElement('div');
@@ -504,9 +651,9 @@ function renderAnimList() {
 
     const info = document.createElement('div');
     info.className = 'muted';
-    const tags = [`${anim.frames.length}f`, `${anim.fps}fps`];
+    const tags = [`${anim.frames.length}f`, `${anim.fps}fps`, kind];
     if (anim.loop) tags.push('loop');
-    if (anim.pingpong) tags.push('pingpong');
+    if (anim.pingpong) tags.push('pp');
     info.textContent = tags.join(' · ');
     meta.appendChild(info);
 
@@ -520,8 +667,12 @@ function renderAnimList() {
     dupBtn.addEventListener('click', () => {
       const copy = ensureAnimId({
         id: null,
+        kind,
         name: `${anim.name} copy`,
-        frames: anim.frames.slice(),
+        frames: Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object'
+          ? anim.frames.map((f) => ({ ...f }))
+          : anim.frames.slice(),
+        anchorMode: anim.anchorMode || DEFAULT_ANCHOR,
         fps: anim.fps,
         loop: !!anim.loop,
         pingpong: !!anim.pingpong,
@@ -537,7 +688,8 @@ function renderAnimList() {
       const i = sheet.animations.indexOf(anim);
       if (i >= 0) sheet.animations.splice(i, 1);
       if (state.ui.editing.id === anim.id) {
-        state.ui.editing = emptyAnimEditor();
+        state.ui.editing = emptyAnimEditor(sheet.mode);
+        state.ui.editing.anchorMode = sheet.anchorMode || DEFAULT_ANCHOR;
         syncEditorInputs();
       }
       renderAnimList();
@@ -551,14 +703,9 @@ function renderAnimList() {
 
     els.animList.appendChild(li);
 
-    if (currentImage) {
+    if (currentImage && Array.isArray(anim.frames) && anim.frames.length && typeof anim.frames[0] === 'object') {
       const cardPlayer = createPlayer(canvas);
-      cardPlayer.setSheet({
-        image: currentImage,
-        cellW: sheet.cellWidth,
-        cellH: sheet.cellHeight,
-        cols: Math.floor(currentImage.naturalWidth / sheet.cellWidth),
-      });
+      cardPlayer.setSheet({ image: currentImage });
       cardPlayer.setAnimation(anim);
       cardPlayer.play();
       cardPlayers.set(anim.id, cardPlayer);
