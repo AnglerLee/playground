@@ -108,8 +108,15 @@ export function createPlayer(canvas) {
   function stop() { pause(); cursor = 0; drawCurrent(); }
   function isPlaying() { return playing; }
   function setStopHandler(fn) { onStop = fn; }
+  function step(direction) {
+    if (!sequence.length) return;
+    pause();
+    cursor = (cursor + (direction > 0 ? 1 : -1) + sequence.length) % sequence.length;
+    drawCurrent();
+  }
+  function getCursor() { return cursor; }
 
-  return { setSheet, setAnimation, play, pause, stop, drawCurrent, isPlaying, setStopHandler };
+  return { setSheet, setAnimation, play, pause, stop, drawCurrent, isPlaying, setStopHandler, step, getCursor };
 }
 
 export async function ensureImage(src) {
