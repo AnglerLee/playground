@@ -180,6 +180,7 @@ const sheetState = {
   anchorMode: 'bottom-center',
   sequence: [],     // unified rect[]: each rect = { x, y, w, h, cx, cy }
   scale: 1,
+  zoom: 1,
   onSelectionChange: null,
 };
 
@@ -477,7 +478,8 @@ function relayout() {
   if (!sheetState.imageWidth || !sheetState.imageHeight) return;
   const stageW = Math.max(1, stage.clientWidth);
   const stageH = Math.max(1, stage.clientHeight);
-  const scale = Math.min(stageW / sheetState.imageWidth, stageH / sheetState.imageHeight, 1);
+  const fit = Math.min(stageW / sheetState.imageWidth, stageH / sheetState.imageHeight, 1);
+  const scale = fit * (sheetState.zoom || 1);
   sheetState.scale = scale;
   const w = sheetState.imageWidth * scale;
   const h = sheetState.imageHeight * scale;
@@ -485,6 +487,20 @@ function relayout() {
   image.style.height = `${h}px`;
   overlay.style.width = `${w}px`;
   overlay.style.height = `${h}px`;
+}
+
+export function setZoom(zoom) {
+  const clamped = Math.max(0.1, Math.min(8, Number(zoom) || 1));
+  if (clamped === sheetState.zoom) return clamped;
+  sheetState.zoom = clamped;
+  relayout();
+  return clamped;
+}
+
+export function getZoom() { return sheetState.zoom; }
+
+export function imageCoordsAtClientExt(clientX, clientY) {
+  return imageCoordsAtClient(clientX, clientY);
 }
 
 function emit() {
