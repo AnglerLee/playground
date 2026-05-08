@@ -514,8 +514,10 @@ input[type="radio"] {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 35vh;
+  min-height: 0;
+  max-height: min(35vh, 320px);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .sheet-item {
   display: grid;
@@ -909,6 +911,37 @@ input[type="radio"] {
   background: var(--accent-soft);
   pointer-events: none;
   z-index: 5;
+}
+
+/* Long-press release feedback. Transition duration must match LONG_PRESS_MS in js/sheet.js. */
+.press-indicator {
+  position: absolute;
+  border: 2px dashed #d4574a;
+  border-radius: 4px;
+  background: rgba(212, 87, 74, 0.08);
+  pointer-events: none;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+}
+.press-indicator.hidden { display: none; }
+.press-ring { width: 28px; height: 28px; transform: rotate(-90deg); }
+.press-ring-track {
+  fill: none;
+  stroke: rgba(212, 87, 74, 0.25);
+  stroke-width: 3;
+}
+.press-ring-progress {
+  fill: none;
+  stroke: #d4574a;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 94.25;
+  stroke-dashoffset: 94.25;
+}
+.press-indicator.active .press-ring-progress {
+  transition: stroke-dashoffset 500ms linear;
+  stroke-dashoffset: 0;
 }
 
 .drop-hint {

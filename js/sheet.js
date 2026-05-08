@@ -186,17 +186,25 @@ const sheetState = {
 
 let stage, image, overlay, dragBox;
 let hoverBox = null;
+let pressIndicator = null;
 let pointerDown = false;
 let pointerButton = 0;
 let dragStarted = false;
 let dragStart = null;
 let resizeObserver = null;
 
+const LONG_PRESS_MS = 500; // keep in sync with .press-indicator transition in styles.css
+const LONG_PRESS_MOVE_TOL = 4;
+let pressTimer = null;
+let longPressFired = false;
+let pressOrigin = null;
+
 export function initSheetView(refs) {
   stage = refs.stage;
   image = refs.image;
   overlay = refs.overlay;
   dragBox = refs.dragBox;
+  pressIndicator = refs.pressIndicator || document.getElementById('press-indicator');
 
   overlay.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointermove', onPointerMove);
@@ -581,8 +589,14 @@ function onPointerDown(e) {
   pointerDown = true;
   pointerButton = e.button;
   dragStarted = false;
+  longPressFired = false;
   dragStart = { x: e.clientX, y: e.clientY };
-  if (e.button === 0) overlay.setPointerCapture?.(e.pointerId);
+  if (e.button === 0) {
+    overlay.setPointerCapture?.(e.pointerId);
+    pressOrigin = { x: e.clientX, y: e.clientY };
+    showPressIndicator(e.clientX, e.clientY);
+    pressTimer = setTimeout(triggerLongPress, LONG_PRESS_MS);
+  }
 }
 
 function onPointerMove(e) {
@@ -590,6 +604,7 @@ function onPointerMove(e) {
   if (pointerButton !== 0) return;
   const dx = e.clientX - dragStart.x;
   const dy = e.clientY - dragStart.y;
+  if (Math.hypot(dx, dy) >= LONG_PRESS_MOVE_TOL) cancelLongPress();
   if (!dragStarted && Math.hypot(dx, dy) < 4) return;
   dragStarted = true;
 
@@ -645,6 +660,8 @@ function onPointerUp(e) {
   const wasButton = pointerButton;
   pointerDown = false;
   dragBox.classList.add('hidden');
+  cancelLongPress();
+  if (longPressFired) { dragStarted = false; return; }
   if (wasButton !== 0) { dragStarted = false; return; }
 
   if (sheetState.mode === 'grid') {
@@ -687,6 +704,98 @@ function onContextMenu(e) {
     if (!comp) return;
     removeLastFreepick(comp);
   }
+}
+
+function triggerLongPress() {
+  pressTimer = null;
+  if (!pointerDown || pointerButton !== 0 || dragStarted || !pressOrigin) {
+    hidePressIndicator();
+    return;
+  }
+  longPressFired = true;
+  hidePressIndicator();
+  const { x, y } = pressOrigin;
+  if (sheetState.mode === 'grid') {
+    if (sheetState.columns === 0) return;
+    const idx = cellIndexAtPoint(x, y);
+    if (idx < 0 || sheetState.emptyCells.has(idx)) return;
+    removeLastGrid(idx);
+  } else if (sheetState.mode === 'freepick') {
+    const comp = pickComponent(x, y);
+    if (!comp) return;
+    removeLastFreepick(comp);
+  }
+}
+
+function cancelLongPress() {
+  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+  hidePressIndicator();
+}
+
+function cellRectAtIndex(idx) {
+  const overlayRect = overlay.getBoundingClientRect();
+  if (sheetState.columns === 0 || sheetState.rows === 0) return null;
+  const cellW = overlayRect.width / sheetState.columns;
+  const cellH = overlayRect.height / sheetState.rows;
+  const c = idx % sheetState.columns;
+  const r = (idx / sheetState.columns) | 0;
+  return {
+    left: overlayRect.left + c * cellW,
+    top: overlayRect.top + r * cellH,
+    width: cellW,
+    height: cellH,
+  };
+}
+
+function componentClientRect(comp) {
+  const rect = overlay.getBoundingClientRect();
+  const W = sheetState.imageWidth || 1;
+  const H = sheetState.imageHeight || 1;
+  return {
+    left: rect.left + (comp.x / W) * rect.width,
+    top: rect.top + (comp.y / H) * rect.height,
+    width: (comp.w / W) * rect.width,
+    height: (comp.h / H) * rect.height,
+  };
+}
+
+function currentTargetRect(clientX, clientY) {
+  if (sheetState.mode === 'grid') {
+    if (sheetState.columns === 0) return null;
+    const idx = cellIndexAtPoint(clientX, clientY);
+    if (idx < 0 || sheetState.emptyCells.has(idx)) return null;
+    return cellRectAtIndex(idx);
+  }
+  if (sheetState.mode === 'freepick') {
+    const comp = pickComponent(clientX, clientY);
+    if (!comp) return null;
+    return componentClientRect(comp);
+  }
+  return null;
+}
+
+function showPressIndicator(clientX, clientY) {
+  if (!pressIndicator || !stage) return;
+  const rect = currentTargetRect(clientX, clientY);
+  if (!rect) return;
+  const stageRect = stage.getBoundingClientRect();
+  pressIndicator.style.left   = `${rect.left - stageRect.left + stage.scrollLeft}px`;
+  pressIndicator.style.top    = `${rect.top  - stageRect.top  + stage.scrollTop}px`;
+  pressIndicator.style.width  = `${rect.width}px`;
+  pressIndicator.style.height = `${rect.height}px`;
+  pressIndicator.classList.remove('hidden');
+  pressIndicator.classList.remove('active');
+  // Force reflow so the next frame triggers the stroke-dashoffset transition.
+  void pressIndicator.offsetWidth;
+  requestAnimationFrame(() => {
+    if (pressIndicator) pressIndicator.classList.add('active');
+  });
+}
+
+function hidePressIndicator() {
+  if (!pressIndicator) return;
+  pressIndicator.classList.remove('active');
+  pressIndicator.classList.add('hidden');
 }
 
 function appendGridIndices(indices) {

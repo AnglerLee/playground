@@ -1,5 +1,9 @@
 [
-  { "name": "cat",    "src": "cat.png" },
-  { "name": "dog",    "src": "dog.png" },
-  { "name": "rabbit", "src": "rabbit.png" }
+  { "name": "cat",      "src": "cat.png" },
+  { "name": "dog",      "src": "dog.png" },
+  { "name": "rabbit",   "src": "rabbit.png" },
+  { "name": "capybara", "src": "capybara.png" },
+  { "name": "cogi",     "src": "cogi.png" },
+  { "name": "persian",  "src": "persian.png" },
+  { "name": "poodle",   "src": "poodle.png" }
 ]
