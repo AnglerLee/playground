@@ -194,10 +194,12 @@
           <label for="mode-freepick"><svg class="icon" aria-hidden="true"><use href="#i-lasso"/></svg> Freepick</label>
         </div>
 
-        <div class="cell-controls" id="grid-row">
-          <label class="field">W <input id="cell-width" type="number" min="1" step="1" value="128" /></label>
-          <label class="field">H <input id="cell-height" type="number" min="1" step="1" value="128" /></label>
-          <button id="apply-cell" class="btn-ghost" type="button">Apply</button>
+        <div class="cell-controls" id="grid-row" title="Grid cell size">
+          <span class="cell-label">Cell</span>
+          <input id="cell-width" type="number" min="1" step="1" value="128" aria-label="Cell width" />
+          <span class="cell-x">×</span>
+          <input id="cell-height" type="number" min="1" step="1" value="128" aria-label="Cell height" />
+          <button id="apply-cell" type="button" class="cell-apply" title="Apply cell size (Enter)">Apply</button>
         </div>
 
         <label class="field" id="anchor-field" title="Anchor mode (Freepick alignment)">
@@ -236,7 +238,6 @@
           </div>
           <div id="drag-box" class="drag-box hidden"></div>
         </div>
-        <div id="drop-hint" class="drop-hint hidden">Drop image to add a new sheet</div>
         <div id="sheet-empty" class="sheet-empty hidden">
           <svg class="empty-art" viewBox="0 0 64 64" aria-hidden="true">
             <use href="#i-image"/>
@@ -333,6 +334,12 @@
     </aside>
   </main>
 
+  <div id="drop-hint" class="drop-hint hidden" aria-hidden="true">
+    <div class="drop-hint-card">
+      <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+      <span>Drop image anywhere to add a new sheet</span>
+    </div>
+  </div>
   <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="false"></div>
   <div id="dialog-host" class="dialog-host" aria-hidden="true"></div>
 

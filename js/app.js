@@ -1205,6 +1205,13 @@ async function saveAnimation() {
   renderSheetList();
   notify();
   toast(`Saved "${name}"`, 'success');
+
+  // Move on to a fresh editor so the user can start the next one immediately
+  state.ui.editing = emptyAnimEditor(sheet.mode);
+  state.ui.editing.anchorMode = sheet.anchorMode || DEFAULT_ANCHOR;
+  syncEditorInputs();
+  renderAnimList();
+  els.animName.focus();
 }
 
 async function loadAnimIntoEditor(anim) {
@@ -1319,7 +1326,7 @@ function renderAnimList() {
 function popMenu(targetEl, items) {
   closePopMenu();
   const menu = document.createElement('div');
-  menu.className = 'menu pop-menu';
+  menu.className = 'pop-menu';
   for (const it of items) {
     if (it === '-') {
       const hr = document.createElement('hr');

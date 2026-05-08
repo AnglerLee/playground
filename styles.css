@@ -419,6 +419,45 @@ input[type="radio"] {
 .menu button.danger:hover { background: var(--danger-soft); }
 .menu hr { border: none; border-top: 1px solid var(--border-subtle); margin: 4px 2px; }
 
+/* Floating popover menu (anchored to a target element) */
+.pop-menu {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 240px;
+  width: max-content;
+  font-size: var(--fz-sm);
+  animation: pop-in 120ms var(--ease);
+}
+.pop-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: var(--fz-sm);
+}
+.pop-menu button:hover { background: var(--surface-2); }
+.pop-menu button.danger {
+  color: var(--danger);
+  font-weight: 500;
+  background: transparent;
+}
+.pop-menu button.danger:hover { background: var(--danger-soft); }
+.pop-menu hr { border: none; border-top: 1px solid var(--border-subtle); margin: 4px 2px; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 /* Main 3-column layout */
 .app {
   flex: 1;
@@ -659,12 +698,52 @@ input[type="radio"] {
   flex-wrap: wrap;
 }
 .stage-toolbar .cell-controls {
-  display: flex;
-  gap: var(--space-2);
+  display: inline-flex;
   align-items: center;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px 2px 8px;
+  height: 32px;
 }
-.stage-toolbar .cell-controls .field { gap: 4px; }
-.stage-toolbar .cell-controls input[type="number"] { width: 4.5em; }
+.stage-toolbar .cell-controls .cell-label {
+  font-size: var(--fz-sm);
+  color: var(--text-muted);
+  margin-right: 4px;
+  user-select: none;
+}
+.stage-toolbar .cell-controls .cell-x {
+  color: var(--text-faint);
+  font-size: var(--fz-sm);
+  padding: 0 1px;
+}
+.stage-toolbar .cell-controls input[type="number"] {
+  width: 3.4em;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+}
+.stage-toolbar .cell-controls input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--bg-elev);
+}
+.stage-toolbar .cell-controls .cell-apply {
+  margin-left: 2px;
+  padding: 3px 8px;
+  height: 24px;
+  font-size: var(--fz-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: 4px;
+  color: var(--text);
+}
+.stage-toolbar .cell-controls .cell-apply:hover { background: var(--surface-hover); }
 .zoom-controls {
   display: inline-flex;
   align-items: center;
@@ -833,20 +912,43 @@ input[type="radio"] {
 }
 
 .drop-hint {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  inset: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(15, 17, 21, 0.6);
+  backdrop-filter: blur(4px);
   border: 2px dashed var(--accent);
-  color: #fff;
+  border-radius: var(--radius-lg);
+  z-index: 250;
+  pointer-events: none;
+  animation: drop-in 160ms var(--ease);
+}
+[data-theme="light"] .drop-hint {
+  background: rgba(244, 246, 250, 0.7);
+}
+.drop-hint-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 18px 28px;
+  border-radius: var(--radius-lg);
   font-size: var(--fz-lg);
   font-weight: 600;
-  z-index: 20;
-  pointer-events: none;
-  border-radius: var(--radius);
-  margin: var(--space-2);
+  box-shadow: var(--shadow-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.drop-hint-card .icon {
+  width: 22px;
+  height: 22px;
+  color: var(--accent);
+}
+@keyframes drop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .sheet-empty {
