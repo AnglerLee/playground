@@ -1,0 +1,5 @@
+[
+  { "name": "cat",    "src": "cat.png" },
+  { "name": "dog",    "src": "dog.png" },
+  { "name": "rabbit", "src": "rabbit.png" }
+]
