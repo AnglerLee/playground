@@ -67,12 +67,8 @@
           <input id="anim-pingpong" type="checkbox" /> pingpong
         </label>
       </div>
-      <div class="field block">
-        <span>Frame sequence</span>
-        <ol id="frame-track" class="frame-track" aria-label="Frame sequence (drag to reorder)"></ol>
-      </div>
       <label class="field block">
-        Frames (comma-separated, advanced)
+        Frames (comma-separated)
         <input id="anim-frames" type="text" placeholder="0,1,2,3" />
       </label>
       <div class="preview-wrap">
@@ -88,7 +84,7 @@
         <button id="clear-selection" type="button">Clear selection</button>
         <button id="new-anim" type="button">New</button>
       </div>
-      <p class="hint muted">Click cells, Shift/Ctrl-click to toggle, or drag a box. Empty cells are disabled.</p>
+      <p class="hint muted">Click cells (or drag a box) to append to the sequence. Right-click a cell to remove its last occurrence. Empty cells are disabled.</p>
     </aside>
 
     <section class="list-pane">

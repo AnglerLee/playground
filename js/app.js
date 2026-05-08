@@ -3,7 +3,7 @@ import {
   loadFromStorage, applyLoaded, clearStorage, notify, saveNow, autoCellSize,
 } from './state.js';
 import {
-  initSheetView, setSelectionListener, setDoubleClickListener,
+  initSheetView, setSelectionListener,
   showSheet, setSequence, loadImage, clearEmptyCellCache,
 } from './sheet.js';
 import { createPlayer } from './preview.js';
@@ -42,7 +42,6 @@ const els = {
   animLoop: document.getElementById('anim-loop'),
   animPingpong: document.getElementById('anim-pingpong'),
   animFrames: document.getElementById('anim-frames'),
-  frameTrack: document.getElementById('frame-track'),
 
   previewCanvas: document.getElementById('preview-canvas'),
   previewPlay: document.getElementById('preview-play'),
@@ -75,7 +74,6 @@ async function init() {
     dragBox: els.dragBox,
   });
   setSelectionListener(onSelectionChanged);
-  setDoubleClickListener(onCellDoubleClicked);
 
   const stored = loadFromStorage();
   if (stored) applyLoaded(stored, { merge: false });
@@ -214,31 +212,10 @@ function renderEmptyState(message) {
 
 function onSelectionChanged(indices) {
   const ed = state.ui.editing;
-  const presentNow = new Set(indices);
-  const presentBefore = new Set(ed.frames);
-  const next = ed.frames.filter((i) => presentNow.has(i));
-  for (const i of indices) {
-    if (!presentBefore.has(i)) next.push(i);
-  }
-  ed.frames = next;
-  syncFrameInputs();
+  ed.frames = indices.slice();
+  els.animFrames.value = indices.join(',');
   applyEditorPreview();
   notify();
-}
-
-function onCellDoubleClicked(idx) {
-  const ed = state.ui.editing;
-  ed.frames = [...ed.frames, idx];
-  syncFrameInputs();
-  setSequence(ed.frames);
-  applyEditorPreview();
-  notify();
-}
-
-function syncFrameInputs() {
-  const ed = state.ui.editing;
-  els.animFrames.value = ed.frames.join(',');
-  renderFrameTrack();
 }
 
 function syncEditorInputs() {
@@ -247,85 +224,9 @@ function syncEditorInputs() {
   els.animFps.value = ed.fps;
   els.animLoop.checked = !!ed.loop;
   els.animPingpong.checked = !!ed.pingpong;
-  syncFrameInputs();
+  els.animFrames.value = ed.frames.join(',');
   setSequence(ed.frames);
   applyEditorPreview();
-}
-
-function renderFrameTrack() {
-  const ed = state.ui.editing;
-  els.frameTrack.innerHTML = '';
-  ed.frames.forEach((frameIdx, i) => {
-    const li = document.createElement('li');
-    li.className = 'frame-chip';
-    li.draggable = true;
-    li.dataset.pos = String(i);
-    li.title = `position ${i + 1}: cell #${frameIdx}`;
-
-    const ord = document.createElement('span');
-    ord.className = 'ord';
-    ord.textContent = `${i + 1}.`;
-    const idx = document.createElement('span');
-    idx.className = 'idx';
-    idx.textContent = `#${frameIdx}`;
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.title = 'remove';
-    del.textContent = '✕';
-    del.addEventListener('click', (e) => {
-      e.stopPropagation();
-      ed.frames = ed.frames.filter((_, j) => j !== i);
-      syncFrameInputs();
-      setSequence(ed.frames);
-      applyEditorPreview();
-      notify();
-    });
-    li.appendChild(ord);
-    li.appendChild(idx);
-    li.appendChild(del);
-
-    li.addEventListener('dragstart', (e) => {
-      li.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', String(i));
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    li.addEventListener('dragend', () => {
-      li.classList.remove('dragging');
-      els.frameTrack.querySelectorAll('.frame-chip').forEach((el) => {
-        el.classList.remove('drop-before', 'drop-after');
-      });
-    });
-    li.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      const rect = li.getBoundingClientRect();
-      const after = e.clientX > rect.left + rect.width / 2;
-      li.classList.toggle('drop-before', !after);
-      li.classList.toggle('drop-after', after);
-    });
-    li.addEventListener('dragleave', () => {
-      li.classList.remove('drop-before', 'drop-after');
-    });
-    li.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const from = Number(e.dataTransfer.getData('text/plain'));
-      if (!Number.isFinite(from) || from === i) return;
-      const rect = li.getBoundingClientRect();
-      const after = e.clientX > rect.left + rect.width / 2;
-      let target = i + (after ? 1 : 0);
-      const arr = ed.frames.slice();
-      const [moved] = arr.splice(from, 1);
-      if (from < target) target -= 1;
-      arr.splice(target, 0, moved);
-      ed.frames = arr;
-      syncFrameInputs();
-      setSequence(ed.frames);
-      applyEditorPreview();
-      notify();
-    });
-
-    els.frameTrack.appendChild(li);
-  });
 }
 
 function applyEditorPreview() {
@@ -397,7 +298,6 @@ function wireEvents() {
     const frames = parseFrameInput(els.animFrames.value);
     state.ui.editing.frames = frames;
     setSequence(frames);
-    renderFrameTrack();
     applyEditorPreview();
     notify();
   });
@@ -409,7 +309,6 @@ function wireEvents() {
   els.clearSel.addEventListener('click', () => {
     state.ui.editing.frames = [];
     setSequence([]);
-    syncFrameInputs();
     applyEditorPreview();
     notify();
   });

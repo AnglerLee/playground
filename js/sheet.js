@@ -85,15 +85,13 @@ const sheetState = {
   sequence: [],
   scale: 1,
   onSelectionChange: null,
-  onDoubleClickAdd: null,
 };
 
 let stage, image, overlay, dragBox;
 let pointerDown = false;
+let pointerButton = 0;
 let dragStarted = false;
 let dragStart = null;
-let initialSequence = [];
-let dragMode = 'replace';
 let resizeObserver = null;
 
 export function initSheetView(refs) {
@@ -105,7 +103,7 @@ export function initSheetView(refs) {
   overlay.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
-  overlay.addEventListener('dblclick', onDoubleClick);
+  overlay.addEventListener('contextmenu', onContextMenu);
 
   resizeObserver = new ResizeObserver(() => relayout());
   resizeObserver.observe(stage);
@@ -113,7 +111,6 @@ export function initSheetView(refs) {
 }
 
 export function setSelectionListener(fn) { sheetState.onSelectionChange = fn; }
-export function setDoubleClickListener(fn) { sheetState.onDoubleClickAdd = fn; }
 
 export async function showSheet({ src, cellWidth, cellHeight }) {
   if (!src) {
@@ -202,11 +199,21 @@ export function setSequence(frames) {
 }
 
 function syncCellsSelected() {
-  const seen = new Set(sheetState.sequence);
+  const positions = new Map();
+  sheetState.sequence.forEach((idx, i) => {
+    if (!positions.has(idx)) positions.set(idx, []);
+    positions.get(idx).push(i + 1);
+  });
   for (const cell of overlay.querySelectorAll('.cell')) {
     const idx = Number(cell.dataset.index);
-    if (seen.has(idx)) cell.classList.add('selected');
-    else cell.classList.remove('selected');
+    const list = positions.get(idx);
+    if (list) {
+      cell.classList.add('selected');
+      cell.dataset.order = list.join(',');
+    } else {
+      cell.classList.remove('selected');
+      delete cell.dataset.order;
+    }
   }
 }
 
@@ -224,25 +231,24 @@ function cellIndexAtPoint(clientX, clientY) {
 }
 
 function onPointerDown(e) {
-  if (e.button !== 0) return;
   if (sheetState.columns === 0) return;
+  if (e.button !== 0 && e.button !== 2) return;
   pointerDown = true;
+  pointerButton = e.button;
   dragStarted = false;
   dragStart = { x: e.clientX, y: e.clientY };
-  initialSequence = sheetState.sequence.slice();
-  dragMode = e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : 'replace';
-  overlay.setPointerCapture?.(e.pointerId);
+  if (e.button === 0) overlay.setPointerCapture?.(e.pointerId);
 }
 
 function onPointerMove(e) {
   if (!pointerDown) return;
+  if (pointerButton !== 0) return;
   const dx = e.clientX - dragStart.x;
   const dy = e.clientY - dragStart.y;
   if (!dragStarted && Math.hypot(dx, dy) < 4) return;
   dragStarted = true;
 
   const stageRect = stage.getBoundingClientRect();
-  const overlayRect = overlay.getBoundingClientRect();
   const x1 = Math.min(dragStart.x, e.clientX);
   const y1 = Math.min(dragStart.y, e.clientY);
   const x2 = Math.max(dragStart.x, e.clientX);
@@ -253,70 +259,78 @@ function onPointerMove(e) {
   dragBox.style.top = `${y1 - stageRect.top + stage.scrollTop}px`;
   dragBox.style.width = `${x2 - x1}px`;
   dragBox.style.height = `${y2 - y1}px`;
+}
 
+function boxCellIndices(x1, y1, x2, y2) {
+  const overlayRect = overlay.getBoundingClientRect();
   const cellW = overlayRect.width / sheetState.columns;
   const cellH = overlayRect.height / sheetState.rows;
   const cx1 = Math.max(0, Math.floor((x1 - overlayRect.left) / cellW));
   const cy1 = Math.max(0, Math.floor((y1 - overlayRect.top) / cellH));
   const cx2 = Math.min(sheetState.columns - 1, Math.floor((x2 - overlayRect.left) / cellW));
   const cy2 = Math.min(sheetState.rows - 1, Math.floor((y2 - overlayRect.top) / cellH));
-
-  const boxIndices = [];
+  const out = [];
   for (let r = cy1; r <= cy2; r++) {
     for (let c = cx1; c <= cx2; c++) {
       const idx = r * sheetState.columns + c;
-      if (idx >= 0 && !sheetState.emptyCells.has(idx)) boxIndices.push(idx);
+      if (idx >= 0 && !sheetState.emptyCells.has(idx)) out.push(idx);
     }
   }
-
-  let next;
-  if (dragMode === 'toggle') {
-    const baseSeen = new Set(initialSequence);
-    next = initialSequence.slice();
-    for (const i of boxIndices) {
-      if (baseSeen.has(i)) {
-        next = next.filter((x) => x !== i);
-      } else {
-        baseSeen.add(i);
-        next.push(i);
-      }
-    }
-  } else {
-    next = boxIndices;
-  }
-  setSequence(next);
+  return out;
 }
 
 function onPointerUp(e) {
   if (!pointerDown) return;
+  const wasButton = pointerButton;
   pointerDown = false;
   dragBox.classList.add('hidden');
-  if (!dragStarted) {
+  if (wasButton !== 0) { dragStarted = false; return; }
+
+  if (dragStarted) {
+    const x1 = Math.min(dragStart.x, e.clientX);
+    const y1 = Math.min(dragStart.y, e.clientY);
+    const x2 = Math.max(dragStart.x, e.clientX);
+    const y2 = Math.max(dragStart.y, e.clientY);
+    const indices = boxCellIndices(x1, y1, x2, y2);
+    if (indices.length) appendToSequence(indices);
+  } else {
     const idx = cellIndexAtPoint(e.clientX, e.clientY);
     if (idx >= 0 && !sheetState.emptyCells.has(idx)) {
-      const present = initialSequence.includes(idx);
-      if (dragMode === 'toggle') {
-        const next = present
-          ? initialSequence.filter((x) => x !== idx)
-          : [...initialSequence, idx];
-        setSequence(next);
-      } else if (present) {
-        setSequence(initialSequence.filter((x) => x !== idx));
-      } else {
-        setSequence([...initialSequence, idx]);
-      }
-    } else if (dragMode === 'replace') {
-      setSequence([]);
+      appendToSequence([idx]);
     }
   }
   dragStarted = false;
-  initialSequence = [];
 }
 
-function onDoubleClick(e) {
+function onContextMenu(e) {
+  e.preventDefault();
+  if (sheetState.columns === 0) return;
   const idx = cellIndexAtPoint(e.clientX, e.clientY);
   if (idx < 0 || sheetState.emptyCells.has(idx)) return;
-  if (sheetState.onDoubleClickAdd) sheetState.onDoubleClickAdd(idx);
+  removeLastOccurrence(idx);
+}
+
+function appendToSequence(indices) {
+  const total = sheetState.columns * sheetState.rows;
+  const next = sheetState.sequence.slice();
+  for (const i of indices) {
+    const n = i | 0;
+    if (n < 0 || n >= total) continue;
+    if (sheetState.emptyCells.has(n)) continue;
+    next.push(n);
+  }
+  setSequence(next);
+}
+
+function removeLastOccurrence(idx) {
+  const next = sheetState.sequence.slice();
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i] === idx) {
+      next.splice(i, 1);
+      break;
+    }
+  }
+  setSequence(next);
 }
 
 export function getSheetGrid() {

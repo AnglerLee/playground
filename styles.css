@@ -147,10 +147,14 @@ input[type="number"] { width: 6em; }
   position: absolute;
   top: 2px;
   left: 4px;
+  right: 2px;
   font-size: 10px;
+  font-weight: 600;
   color: #fff;
-  text-shadow: 0 0 2px #000;
+  text-shadow: 0 0 3px #000, 0 0 2px #000;
   pointer-events: none;
+  word-break: break-all;
+  line-height: 1.05;
 }
 .cell.empty {
   background: var(--empty);
@@ -192,53 +196,6 @@ input[type="number"] { width: 6em; }
 }
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-
-.frame-track {
-  list-style: none;
-  margin: 0;
-  padding: 6px;
-  min-height: 36px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  background: #15181d;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  counter-reset: frame;
-}
-.frame-track:empty::before {
-  content: 'Click cells in the sheet, or double-click for duplicates';
-  color: var(--muted);
-  font-size: 0.85em;
-  align-self: center;
-}
-.frame-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 4px 2px 6px;
-  font-size: 12px;
-  cursor: grab;
-  user-select: none;
-}
-.frame-chip:active { cursor: grabbing; }
-.frame-chip.dragging { opacity: 0.4; }
-.frame-chip.drop-before { box-shadow: -2px 0 0 var(--accent-2); }
-.frame-chip.drop-after { box-shadow: 2px 0 0 var(--accent-2); }
-.frame-chip .ord { color: var(--muted); }
-.frame-chip .idx { font-weight: 600; }
-.frame-chip button {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  padding: 0 2px;
-  font: inherit;
-  cursor: pointer;
-}
-.frame-chip button:hover { color: var(--danger); }
 
 .preview-wrap {
   display: flex;

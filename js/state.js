@@ -1,5 +1,5 @@
 export const STORAGE_KEY = 'sprite-animator:v1';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const listeners = new Set();
 
@@ -109,11 +109,26 @@ export function loadFromStorage() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
+    return migrate(parsed);
   } catch (err) {
     console.warn('localStorage load failed:', err);
     return null;
   }
+}
+
+export function migrate(payload) {
+  let v = Number(payload.version) || 1;
+  if (v < 2 && payload.sheets && typeof payload.sheets === 'object') {
+    for (const sheet of Object.values(payload.sheets)) {
+      if (sheet && typeof sheet === 'object') {
+        sheet.cellWidth = 0;
+        sheet.cellHeight = 0;
+      }
+    }
+    v = 2;
+  }
+  payload.version = v;
+  return payload;
 }
 
 export function clearStorage() {
