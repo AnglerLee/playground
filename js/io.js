@@ -1,4 +1,4 @@
-import { serialize, applyLoaded, SCHEMA_VERSION } from './state.js';
+import { serialize, applyLoaded, SCHEMA_VERSION, migrate } from './state.js';
 
 export async function fetchManifest(url = 'images/manifest.json') {
   try {
@@ -81,7 +81,7 @@ export function validateImported(payload) {
 }
 
 export function importPayload(payload, { merge = true } = {}) {
-  applyLoaded(payload, { merge });
+  applyLoaded(migrate(payload), { merge });
 }
 
 export function uniqueSheetName(state, base) {

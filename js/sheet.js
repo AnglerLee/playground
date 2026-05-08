@@ -1,5 +1,6 @@
 const imageCache = new Map();
 const emptyCellCache = new Map();
+const componentCache = new Map();
 
 export function loadImage(src) {
   if (imageCache.has(src)) return imageCache.get(src);
@@ -14,9 +15,7 @@ export function loadImage(src) {
   return promise;
 }
 
-function emptyCellKey(src, cellW, cellH) {
-  return `${src}|${cellW}x${cellH}`;
-}
+function emptyCellKey(src, cellW, cellH) { return `${src}|${cellW}x${cellH}`; }
 
 export async function detectEmptyCells(img, cellW, cellH, src) {
   const key = emptyCellKey(src, cellW, cellH);
@@ -25,29 +24,14 @@ export async function detectEmptyCells(img, cellW, cellH, src) {
   const cols = Math.floor(img.naturalWidth / cellW);
   const rows = Math.floor(img.naturalHeight / cellH);
   const empty = new Set();
-
   if (cols <= 0 || rows <= 0) {
     emptyCellCache.set(key, empty);
     return empty;
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
-
-  let imageData;
-  try {
-    imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  } catch (err) {
-    console.warn('getImageData failed (likely CORS); skipping empty-cell detection', err);
-    emptyCellCache.set(key, empty);
-    return empty;
-  }
-  const data = imageData.data;
-  const stride = canvas.width * 4;
-
+  const data = await readImageData(img);
+  if (!data) { emptyCellCache.set(key, empty); return empty; }
+  const stride = img.naturalWidth * 4;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const x0 = c * cellW;
@@ -72,9 +56,112 @@ export function clearEmptyCellCache(src) {
   for (const key of emptyCellCache.keys()) {
     if (key.startsWith(`${src}|`)) emptyCellCache.delete(key);
   }
+  componentCache.delete(src);
+}
+
+async function readImageData(img) {
+  const W = img.naturalWidth;
+  const H = img.naturalHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  try {
+    return ctx.getImageData(0, 0, W, H).data;
+  } catch (err) {
+    console.warn('getImageData failed (likely CORS):', err);
+    return null;
+  }
+}
+
+const ALPHA_THRESHOLD = 8;
+const MIN_COMPONENT_PIXELS = 16;
+
+export async function labelComponents(img, src) {
+  if (componentCache.has(src)) return componentCache.get(src);
+  const W = img.naturalWidth;
+  const H = img.naturalHeight;
+  const data = await readImageData(img);
+  if (!data) return null;
+  const N = W * H;
+  const labels = new Uint32Array(N);
+  const queue = new Int32Array(N);
+  const components = [null];
+  const dx = [-1, 0, 1, -1, 1, -1, 0, 1];
+  const dy = [-1, -1, -1, 0, 0, 1, 1, 1];
+  let nextLabel = 1;
+
+  for (let p = 0; p < N; p++) {
+    if (labels[p] !== 0) continue;
+    if (data[p * 4 + 3] < ALPHA_THRESHOLD) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = p;
+    labels[p] = nextLabel;
+    let xmin = W, ymin = H, xmax = -1, ymax = -1;
+    let sumX = 0, sumY = 0, count = 0;
+    while (head < tail) {
+      const q = queue[head++];
+      const qx = q % W;
+      const qy = (q / W) | 0;
+      if (qx < xmin) xmin = qx;
+      if (qy < ymin) ymin = qy;
+      if (qx > xmax) xmax = qx;
+      if (qy > ymax) ymax = qy;
+      sumX += qx;
+      sumY += qy;
+      count++;
+      for (let k = 0; k < 8; k++) {
+        const nx = qx + dx[k];
+        const ny = qy + dy[k];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const np = ny * W + nx;
+        if (labels[np] !== 0) continue;
+        if (data[np * 4 + 3] < ALPHA_THRESHOLD) continue;
+        labels[np] = nextLabel;
+        queue[tail++] = np;
+      }
+    }
+    if (count >= MIN_COMPONENT_PIXELS) {
+      components.push({
+        label: nextLabel,
+        x: xmin,
+        y: ymin,
+        w: xmax - xmin + 1,
+        h: ymax - ymin + 1,
+        cx: sumX / count,
+        cy: sumY / count,
+        count,
+      });
+      nextLabel++;
+    } else {
+      for (let k = 0; k < tail; k++) labels[queue[k]] = 0;
+    }
+  }
+
+  const byLabel = new Map();
+  for (const c of components) if (c) byLabel.set(c.label, c);
+  const result = { labels, components: components.filter(Boolean), byLabel, width: W, height: H };
+  componentCache.set(src, result);
+  return result;
+}
+
+export function anchorOf(frame, anchorMode) {
+  switch (anchorMode) {
+    case 'bbox-center': return { ax: frame.w / 2, ay: frame.h / 2 };
+    case 'top-center':  return { ax: frame.w / 2, ay: 0 };
+    case 'centroid':
+      if (Number.isFinite(frame.cx) && Number.isFinite(frame.cy)) {
+        return { ax: frame.cx - frame.x, ay: frame.cy - frame.y };
+      }
+      return { ax: frame.w / 2, ay: frame.h / 2 };
+    case 'bottom-center':
+    default:            return { ax: frame.w / 2, ay: frame.h };
+  }
 }
 
 const sheetState = {
+  src: null,
   imageWidth: 0,
   imageHeight: 0,
   cellWidth: 0,
@@ -82,12 +169,17 @@ const sheetState = {
   columns: 0,
   rows: 0,
   emptyCells: new Set(),
-  sequence: [],
+  components: null,
+  mode: 'grid',
+  anchorMode: 'bottom-center',
+  gridSequence: [],
+  freeSequence: [],
   scale: 1,
   onSelectionChange: null,
 };
 
 let stage, image, overlay, dragBox;
+let hoverBox = null;
 let pointerDown = false;
 let pointerButton = 0;
 let dragStarted = false;
@@ -104,6 +196,10 @@ export function initSheetView(refs) {
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
   overlay.addEventListener('contextmenu', onContextMenu);
+  overlay.addEventListener('mousemove', onHoverMove);
+  overlay.addEventListener('mouseleave', () => {
+    if (hoverBox) hoverBox.classList.add('hidden');
+  });
 
   resizeObserver = new ResizeObserver(() => relayout());
   resizeObserver.observe(stage);
@@ -112,31 +208,56 @@ export function initSheetView(refs) {
 
 export function setSelectionListener(fn) { sheetState.onSelectionChange = fn; }
 
-export async function showSheet({ src, cellWidth, cellHeight }) {
+export async function showSheet({
+  src,
+  mode = 'grid',
+  cellWidth = 0,
+  cellHeight = 0,
+  anchorMode = 'bottom-center',
+}) {
   if (!src) {
     image.removeAttribute('src');
     overlay.style.display = 'none';
+    sheetState.src = null;
     sheetState.columns = 0;
     sheetState.rows = 0;
     sheetState.emptyCells = new Set();
-    setSequence([]);
+    sheetState.components = null;
+    sheetState.gridSequence = [];
+    sheetState.freeSequence = [];
+    emit();
     return null;
   }
   const img = await loadImage(src);
   image.src = src;
-  overlay.style.display = 'grid';
+  overlay.style.display = '';
 
+  sheetState.src = src;
   sheetState.imageWidth = img.naturalWidth;
   sheetState.imageHeight = img.naturalHeight;
+  sheetState.mode = mode;
+  sheetState.anchorMode = anchorMode;
   sheetState.cellWidth = cellWidth;
   sheetState.cellHeight = cellHeight;
-  sheetState.columns = Math.floor(img.naturalWidth / cellWidth);
-  sheetState.rows = Math.floor(img.naturalHeight / cellHeight);
+  sheetState.columns = cellWidth > 0 ? Math.floor(img.naturalWidth / cellWidth) : 0;
+  sheetState.rows = cellHeight > 0 ? Math.floor(img.naturalHeight / cellHeight) : 0;
+  sheetState.gridSequence = [];
+  sheetState.freeSequence = [];
 
-  sheetState.emptyCells = await detectEmptyCells(img, cellWidth, cellHeight, src);
+  if (mode === 'grid' && cellWidth > 0 && cellHeight > 0) {
+    sheetState.emptyCells = await detectEmptyCells(img, cellWidth, cellHeight, src);
+  } else {
+    sheetState.emptyCells = new Set();
+  }
+  if (mode === 'freepick') {
+    sheetState.components = await labelComponents(img, src);
+  } else {
+    sheetState.components = null;
+  }
+
   rebuildOverlay();
   relayout();
-  setSequence([]);
+  emit();
   return {
     image: img,
     columns: sheetState.columns,
@@ -146,24 +267,128 @@ export async function showSheet({ src, cellWidth, cellHeight }) {
   };
 }
 
+export async function setMode(mode) {
+  if (sheetState.mode === mode) return;
+  sheetState.mode = mode;
+  if (mode === 'grid' && sheetState.cellWidth > 0 && sheetState.cellHeight > 0 && sheetState.src) {
+    const img = await loadImage(sheetState.src);
+    sheetState.emptyCells = await detectEmptyCells(img, sheetState.cellWidth, sheetState.cellHeight, sheetState.src);
+    sheetState.columns = Math.floor(sheetState.imageWidth / sheetState.cellWidth);
+    sheetState.rows = Math.floor(sheetState.imageHeight / sheetState.cellHeight);
+  }
+  if (mode === 'freepick' && sheetState.src) {
+    const img = await loadImage(sheetState.src);
+    sheetState.components = await labelComponents(img, sheetState.src);
+  }
+  sheetState.gridSequence = [];
+  sheetState.freeSequence = [];
+  rebuildOverlay();
+  relayout();
+  emit();
+}
+
+export function setAnchorMode(anchorMode) {
+  sheetState.anchorMode = anchorMode;
+  if (sheetState.mode === 'freepick') {
+    rebuildFreepickSelection();
+    emit();
+  }
+}
+
 function rebuildOverlay() {
   overlay.innerHTML = '';
-  const { columns, rows, emptyCells } = sheetState;
-  if (columns <= 0 || rows <= 0) return;
-  overlay.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
-  overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-  const frag = document.createDocumentFragment();
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < columns; c++) {
-      const idx = r * columns + c;
-      const cell = document.createElement('div');
-      cell.className = 'cell' + (emptyCells.has(idx) ? ' empty' : '');
-      cell.dataset.index = String(idx);
-      cell.title = `#${idx} (r${r}, c${c}) — double-click to append duplicate`;
-      frag.appendChild(cell);
+  hoverBox = null;
+  const { columns, rows, emptyCells, mode } = sheetState;
+  if (mode === 'grid' && columns > 0 && rows > 0) {
+    overlay.classList.remove('freepick');
+    overlay.classList.add('grid');
+    overlay.style.display = 'grid';
+    overlay.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+    overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    const frag = document.createDocumentFragment();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < columns; c++) {
+        const idx = r * columns + c;
+        const cell = document.createElement('div');
+        cell.className = 'cell' + (emptyCells.has(idx) ? ' empty' : '');
+        cell.dataset.index = String(idx);
+        cell.title = `#${idx} (r${r}, c${c})`;
+        frag.appendChild(cell);
+      }
+    }
+    overlay.appendChild(frag);
+  } else if (mode === 'freepick') {
+    overlay.classList.remove('grid');
+    overlay.classList.add('freepick');
+    overlay.style.display = 'block';
+    overlay.style.gridTemplate = '';
+    hoverBox = document.createElement('div');
+    hoverBox.className = 'freepick-hover hidden';
+    overlay.appendChild(hoverBox);
+    rebuildFreepickSelection();
+  } else {
+    overlay.style.display = 'none';
+  }
+  if (sheetState.mode === 'grid') syncCellsSelected();
+}
+
+function rebuildFreepickSelection() {
+  if (sheetState.mode !== 'freepick') return;
+  for (const el of overlay.querySelectorAll('.freepick-box')) el.remove();
+  if (!sheetState.components) return;
+  const W = sheetState.imageWidth || 1;
+  const H = sheetState.imageHeight || 1;
+  const counts = new Map();
+  for (const f of sheetState.freeSequence) {
+    const key = `${f.x},${f.y},${f.w},${f.h}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const seen = new Set();
+  for (const f of sheetState.freeSequence) {
+    const key = `${f.x},${f.y},${f.w},${f.h}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const box = document.createElement('div');
+    box.className = 'freepick-box';
+    box.style.left = `${(f.x / W) * 100}%`;
+    box.style.top = `${(f.y / H) * 100}%`;
+    box.style.width = `${(f.w / W) * 100}%`;
+    box.style.height = `${(f.h / H) * 100}%`;
+
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    const n = counts.get(key);
+    badge.textContent = n > 1 ? `×${n}` : '';
+    box.appendChild(badge);
+
+    const a = anchorOf(f, sheetState.anchorMode);
+    const dot = document.createElement('span');
+    dot.className = 'anchor-dot';
+    dot.style.left = `${(a.ax / Math.max(1, f.w)) * 100}%`;
+    dot.style.top = `${(a.ay / Math.max(1, f.h)) * 100}%`;
+    box.appendChild(dot);
+
+    overlay.appendChild(box);
+  }
+}
+
+function syncCellsSelected() {
+  const positions = new Map();
+  sheetState.gridSequence.forEach((idx, i) => {
+    if (!positions.has(idx)) positions.set(idx, []);
+    positions.get(idx).push(i + 1);
+  });
+  for (const cell of overlay.querySelectorAll('.cell')) {
+    const idx = Number(cell.dataset.index);
+    const list = positions.get(idx);
+    if (list) {
+      cell.classList.add('selected');
+      cell.dataset.order = list.join(',');
+    } else {
+      cell.classList.remove('selected');
+      delete cell.dataset.order;
     }
   }
-  overlay.appendChild(frag);
 }
 
 function relayout() {
@@ -181,40 +406,55 @@ function relayout() {
 }
 
 export function getSequence() {
-  return sheetState.sequence.slice();
+  return sheetState.mode === 'freepick'
+    ? sheetState.freeSequence.map(cloneFrame)
+    : sheetState.gridSequence.slice();
+}
+
+function cloneFrame(f) {
+  return { x: f.x, y: f.y, w: f.w, h: f.h, cx: f.cx, cy: f.cy };
 }
 
 export function setSequence(frames) {
-  const total = sheetState.columns * sheetState.rows;
-  const valid = [];
-  for (const i of frames) {
-    const n = i | 0;
-    if (n < 0 || n >= total) continue;
-    if (sheetState.emptyCells.has(n)) continue;
-    valid.push(n);
+  if (sheetState.mode === 'freepick') {
+    sheetState.freeSequence = (frames || [])
+      .filter((f) => f && Number.isFinite(f.x) && Number.isFinite(f.y) && f.w > 0 && f.h > 0)
+      .map((f) => ({
+        x: f.x | 0,
+        y: f.y | 0,
+        w: f.w | 0,
+        h: f.h | 0,
+        cx: Number.isFinite(f.cx) ? f.cx : f.x + f.w / 2,
+        cy: Number.isFinite(f.cy) ? f.cy : f.y + f.h / 2,
+      }));
+    rebuildFreepickSelection();
+  } else {
+    const total = sheetState.columns * sheetState.rows;
+    const valid = [];
+    for (const i of (frames || [])) {
+      const n = i | 0;
+      if (n < 0 || n >= total) continue;
+      if (sheetState.emptyCells.has(n)) continue;
+      valid.push(n);
+    }
+    sheetState.gridSequence = valid;
+    syncCellsSelected();
   }
-  sheetState.sequence = valid;
-  syncCellsSelected();
-  if (sheetState.onSelectionChange) sheetState.onSelectionChange(valid);
+  emit();
 }
 
-function syncCellsSelected() {
-  const positions = new Map();
-  sheetState.sequence.forEach((idx, i) => {
-    if (!positions.has(idx)) positions.set(idx, []);
-    positions.get(idx).push(i + 1);
-  });
-  for (const cell of overlay.querySelectorAll('.cell')) {
-    const idx = Number(cell.dataset.index);
-    const list = positions.get(idx);
-    if (list) {
-      cell.classList.add('selected');
-      cell.dataset.order = list.join(',');
-    } else {
-      cell.classList.remove('selected');
-      delete cell.dataset.order;
-    }
-  }
+function emit() {
+  if (!sheetState.onSelectionChange) return;
+  sheetState.onSelectionChange(getSequence());
+}
+
+function imageCoordsAtClient(clientX, clientY) {
+  const rect = overlay.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const x = (clientX - rect.left) * (sheetState.imageWidth / rect.width);
+  const y = (clientY - rect.top) * (sheetState.imageHeight / rect.height);
+  if (x < 0 || y < 0 || x >= sheetState.imageWidth || y >= sheetState.imageHeight) return null;
+  return { x, y };
 }
 
 function cellIndexAtPoint(clientX, clientY) {
@@ -230,8 +470,53 @@ function cellIndexAtPoint(clientX, clientY) {
   return r * sheetState.columns + c;
 }
 
+function pickComponent(clientX, clientY) {
+  if (!sheetState.components) return null;
+  const coord = imageCoordsAtClient(clientX, clientY);
+  if (!coord) return null;
+  const W = sheetState.components.width;
+  const H = sheetState.components.height;
+  const ix = Math.floor(coord.x);
+  const iy = Math.floor(coord.y);
+  if (ix < 0 || iy < 0 || ix >= W || iy >= H) return null;
+  let label = sheetState.components.labels[iy * W + ix];
+  if (label === 0) {
+    outer:
+    for (let r = 1; r <= 3; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const nx = ix + dx, ny = iy + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const v = sheetState.components.labels[ny * W + nx];
+          if (v !== 0) { label = v; break outer; }
+        }
+      }
+    }
+  }
+  if (label === 0) return null;
+  return sheetState.components.byLabel.get(label) || null;
+}
+
+function onHoverMove(e) {
+  if (sheetState.mode !== 'freepick' || !hoverBox) return;
+  const comp = pickComponent(e.clientX, e.clientY);
+  if (!comp) {
+    hoverBox.classList.add('hidden');
+    return;
+  }
+  const W = sheetState.imageWidth || 1;
+  const H = sheetState.imageHeight || 1;
+  hoverBox.classList.remove('hidden');
+  hoverBox.style.left = `${(comp.x / W) * 100}%`;
+  hoverBox.style.top = `${(comp.y / H) * 100}%`;
+  hoverBox.style.width = `${(comp.w / W) * 100}%`;
+  hoverBox.style.height = `${(comp.h / H) * 100}%`;
+}
+
 function onPointerDown(e) {
-  if (sheetState.columns === 0) return;
+  if (sheetState.mode === 'grid' && sheetState.columns === 0) return;
+  if (sheetState.mode === 'freepick' && !sheetState.components) return;
   if (e.button !== 0 && e.button !== 2) return;
   pointerDown = true;
   pointerButton = e.button;
@@ -279,6 +564,22 @@ function boxCellIndices(x1, y1, x2, y2) {
   return out;
 }
 
+function boxComponents(x1, y1, x2, y2) {
+  if (!sheetState.components) return [];
+  const a = imageCoordsAtClient(x1, y1);
+  const b = imageCoordsAtClient(x2, y2);
+  if (!a || !b) return [];
+  const ix1 = Math.min(a.x, b.x), iy1 = Math.min(a.y, b.y);
+  const ix2 = Math.max(a.x, b.x), iy2 = Math.max(a.y, b.y);
+  const hits = sheetState.components.components.filter((c) => {
+    const ccx = c.x + c.w / 2;
+    const ccy = c.y + c.h / 2;
+    return ccx >= ix1 && ccx <= ix2 && ccy >= iy1 && ccy <= iy2;
+  });
+  hits.sort((p, q) => (p.y - q.y) || (p.x - q.x));
+  return hits;
+}
+
 function onPointerUp(e) {
   if (!pointerDown) return;
   const wasButton = pointerButton;
@@ -286,17 +587,29 @@ function onPointerUp(e) {
   dragBox.classList.add('hidden');
   if (wasButton !== 0) { dragStarted = false; return; }
 
-  if (dragStarted) {
-    const x1 = Math.min(dragStart.x, e.clientX);
-    const y1 = Math.min(dragStart.y, e.clientY);
-    const x2 = Math.max(dragStart.x, e.clientX);
-    const y2 = Math.max(dragStart.y, e.clientY);
-    const indices = boxCellIndices(x1, y1, x2, y2);
-    if (indices.length) appendToSequence(indices);
-  } else {
-    const idx = cellIndexAtPoint(e.clientX, e.clientY);
-    if (idx >= 0 && !sheetState.emptyCells.has(idx)) {
-      appendToSequence([idx]);
+  if (sheetState.mode === 'grid') {
+    if (dragStarted) {
+      const x1 = Math.min(dragStart.x, e.clientX);
+      const y1 = Math.min(dragStart.y, e.clientY);
+      const x2 = Math.max(dragStart.x, e.clientX);
+      const y2 = Math.max(dragStart.y, e.clientY);
+      const indices = boxCellIndices(x1, y1, x2, y2);
+      if (indices.length) appendGrid(indices);
+    } else {
+      const idx = cellIndexAtPoint(e.clientX, e.clientY);
+      if (idx >= 0 && !sheetState.emptyCells.has(idx)) appendGrid([idx]);
+    }
+  } else if (sheetState.mode === 'freepick') {
+    if (dragStarted) {
+      const x1 = Math.min(dragStart.x, e.clientX);
+      const y1 = Math.min(dragStart.y, e.clientY);
+      const x2 = Math.max(dragStart.x, e.clientX);
+      const y2 = Math.max(dragStart.y, e.clientY);
+      const comps = boxComponents(x1, y1, x2, y2);
+      if (comps.length) appendFreepick(comps);
+    } else {
+      const comp = pickComponent(e.clientX, e.clientY);
+      if (comp) appendFreepick([comp]);
     }
   }
   dragStarted = false;
@@ -304,33 +617,64 @@ function onPointerUp(e) {
 
 function onContextMenu(e) {
   e.preventDefault();
-  if (sheetState.columns === 0) return;
-  const idx = cellIndexAtPoint(e.clientX, e.clientY);
-  if (idx < 0 || sheetState.emptyCells.has(idx)) return;
-  removeLastOccurrence(idx);
+  if (sheetState.mode === 'grid') {
+    if (sheetState.columns === 0) return;
+    const idx = cellIndexAtPoint(e.clientX, e.clientY);
+    if (idx < 0 || sheetState.emptyCells.has(idx)) return;
+    removeLastGrid(idx);
+  } else if (sheetState.mode === 'freepick') {
+    const comp = pickComponent(e.clientX, e.clientY);
+    if (!comp) return;
+    removeLastFreepick(comp);
+  }
 }
 
-function appendToSequence(indices) {
+function appendGrid(indices) {
   const total = sheetState.columns * sheetState.rows;
-  const next = sheetState.sequence.slice();
+  const next = sheetState.gridSequence.slice();
   for (const i of indices) {
     const n = i | 0;
     if (n < 0 || n >= total) continue;
     if (sheetState.emptyCells.has(n)) continue;
     next.push(n);
   }
-  setSequence(next);
+  sheetState.gridSequence = next;
+  syncCellsSelected();
+  emit();
 }
 
-function removeLastOccurrence(idx) {
-  const next = sheetState.sequence.slice();
+function removeLastGrid(idx) {
+  const next = sheetState.gridSequence.slice();
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i] === idx) {
-      next.splice(i, 1);
-      break;
-    }
+    if (next[i] === idx) { next.splice(i, 1); break; }
   }
-  setSequence(next);
+  sheetState.gridSequence = next;
+  syncCellsSelected();
+  emit();
+}
+
+function appendFreepick(comps) {
+  const next = sheetState.freeSequence.slice();
+  for (const c of comps) {
+    next.push({ x: c.x, y: c.y, w: c.w, h: c.h, cx: c.cx, cy: c.cy });
+  }
+  sheetState.freeSequence = next;
+  rebuildFreepickSelection();
+  emit();
+}
+
+function sameRect(a, b) {
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+function removeLastFreepick(comp) {
+  const next = sheetState.freeSequence.slice();
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (sameRect(next[i], comp)) { next.splice(i, 1); break; }
+  }
+  sheetState.freeSequence = next;
+  rebuildFreepickSelection();
+  emit();
 }
 
 export function getSheetGrid() {
@@ -342,3 +686,6 @@ export function getSheetGrid() {
     emptyCells: sheetState.emptyCells,
   };
 }
+
+export function getMode() { return sheetState.mode; }
+export function getAnchorMode() { return sheetState.anchorMode; }
