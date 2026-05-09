@@ -823,6 +823,10 @@ input[type="radio"] {
   left: 0;
   display: grid;
   pointer-events: auto;
+  /* Block native pan/zoom so touch drags reach our pointer handlers. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .cell {

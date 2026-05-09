@@ -209,6 +209,7 @@ export function initSheetView(refs) {
   overlay.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerCancel);
   overlay.addEventListener('contextmenu', onContextMenu);
   overlay.addEventListener('mousemove', onHoverMove);
   overlay.addEventListener('mouseleave', () => {
@@ -690,6 +691,14 @@ function onPointerUp(e) {
     }
   }
   dragStarted = false;
+}
+
+function onPointerCancel() {
+  if (!pointerDown) return;
+  pointerDown = false;
+  dragStarted = false;
+  dragBox.classList.add('hidden');
+  cancelLongPress();
 }
 
 function onContextMenu(e) {

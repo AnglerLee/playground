@@ -384,6 +384,15 @@ function syncToolbarFromSheet(sheet) {
   els.gridRow.classList.toggle('hidden', mode !== 'grid');
   els.hintGrid.classList.toggle('hidden', mode !== 'grid');
   els.hintFreepick.classList.toggle('hidden', mode !== 'freepick');
+  syncDeleteSheetButton(sheet);
+}
+
+function syncDeleteSheetButton(sheet) {
+  const isSample = !sheet || sheet.origin === 'sample';
+  els.deleteSheet.disabled = isSample;
+  els.deleteSheet.title = isSample
+    ? 'Sample sheets cannot be deleted'
+    : 'Delete current sheet';
 }
 
 async function selectSheet(name) {
@@ -483,6 +492,7 @@ function renderEmptyState(message) {
   els.gridInfo.textContent = '';
   els.cursorInfo.textContent = '';
   currentImage = null;
+  syncDeleteSheetButton(null);
   renderAnimList();
 }
 
@@ -848,11 +858,13 @@ function wireEvents() {
 
   // Animation actions
   els.saveAnim.addEventListener('click', saveAnimation);
-  els.newAnim.addEventListener('click', () => {
+  els.newAnim.addEventListener('click', async () => {
+    if (!(await confirmDiscardEditor())) return;
     const sheet = getActiveSheet();
     state.ui.editing = emptyAnimEditor(sheet?.mode || DEFAULT_SHEET_MODE);
     state.ui.editing.anchorMode = sheet?.anchorMode || DEFAULT_ANCHOR;
     syncEditorInputs();
+    renderAnimList();
     notify();
   });
 
@@ -1091,6 +1103,10 @@ async function deleteCurrentSheet() {
   if (!name) return;
   const sheet = state.sheets[name];
   if (!sheet) return;
+  if (sheet.origin === 'sample') {
+    toast('Sample sheets cannot be deleted.', 'warn');
+    return;
+  }
   const ok = await confirmDialog(
     'Delete sheet?',
     `"${name}" and ${sheet.animations.length} animation(s) will be removed.`,
@@ -1157,17 +1173,54 @@ async function resetAll() {
    Save / Animation list
    ============================================================ */
 
-function nextDefaultAnimName(sheet) {
+function nextDefaultAnimName(sheet, sheetName) {
+  const raw = (sheetName || state.ui.activeSheet || 'animation').trim();
+  const base = raw.toLowerCase().replace(/\s+/g, '-').replace(/[^\w.-]+/g, '') || 'animation';
   const used = new Set(
     (sheet.animations || [])
       .map((a) => (a && typeof a.name === 'string' ? a.name.trim() : ''))
       .filter(Boolean),
   );
   for (let i = 1; i < 10000; i++) {
-    const candidate = `animation ${i}`;
+    const candidate = `${base}-${i}`;
     if (!used.has(candidate)) return candidate;
   }
-  return `animation ${Date.now()}`;
+  return `${base}-${Date.now()}`;
+}
+
+function framesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i], q = b[i];
+    if (p.x !== q.x || p.y !== q.y || p.w !== q.w || p.h !== q.h) return false;
+  }
+  return true;
+}
+
+function hasUnsavedChanges() {
+  const ed = state.ui.editing;
+  if (!ed) return false;
+  const sheet = getActiveSheet();
+  if (!sheet) return false;
+  const saved = ed.id ? sheet.animations.find((a) => a.id === ed.id) : null;
+  if (!saved) {
+    return (ed.frames || []).length > 0 || (ed.name || '').trim() !== '';
+  }
+  if ((ed.name || '') !== (saved.name || '')) return true;
+  if ((ed.fps | 0) !== (saved.fps | 0)) return true;
+  if (!!ed.loop !== !!saved.loop) return true;
+  if (!!ed.pingpong !== !!saved.pingpong) return true;
+  if ((ed.anchorMode || '') !== (saved.anchorMode || '')) return true;
+  return !framesEqual(ed.frames || [], saved.frames || []);
+}
+
+async function confirmDiscardEditor() {
+  if (!hasUnsavedChanges()) return true;
+  return await confirmDialog(
+    'Discard unsaved changes?',
+    'The current animation has unsaved changes. Start a new one anyway?',
+    { danger: true, confirmLabel: 'Discard' },
+  );
 }
 
 async function saveAnimation() {
@@ -1177,7 +1230,7 @@ async function saveAnimation() {
   if (!ed.frames.length) { toast('Select at least one frame.', 'warn'); return; }
   let name = (ed.name || '').trim();
   if (!name) {
-    name = nextDefaultAnimName(sheet);
+    name = nextDefaultAnimName(sheet, state.ui.activeSheet);
     ed.name = name;
     if (els.animName) els.animName.value = name;
   }
@@ -1220,7 +1273,6 @@ async function saveAnimation() {
   state.ui.editing.anchorMode = sheet.anchorMode || DEFAULT_ANCHOR;
   syncEditorInputs();
   renderAnimList();
-  els.animName.focus();
 }
 
 async function loadAnimIntoEditor(anim) {
