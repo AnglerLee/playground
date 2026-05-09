@@ -92,7 +92,6 @@ const els = {
   previewInfo: document.getElementById('preview-info'),
 
   saveAnim: document.getElementById('save-anim'),
-  clearSel: document.getElementById('clear-selection'),
   newAnim: document.getElementById('new-anim'),
 
   animList: document.getElementById('anim-list'),
@@ -849,13 +848,6 @@ function wireEvents() {
 
   // Animation actions
   els.saveAnim.addEventListener('click', saveAnimation);
-  els.clearSel.addEventListener('click', () => {
-    state.ui.editing.frames = [];
-    setSequence([]);
-    renderFramesThumbs();
-    applyEditorPreview();
-    notify();
-  });
   els.newAnim.addEventListener('click', () => {
     const sheet = getActiveSheet();
     state.ui.editing = emptyAnimEditor(sheet?.mode || DEFAULT_SHEET_MODE);
@@ -949,7 +941,7 @@ function onKeydown(e) {
       els.newAnim.click();
       break;
     case 'Escape':
-      els.clearSel.click();
+      els.newAnim.click();
       break;
     case '+': case '=':
       stepZoom(+1);
@@ -1165,13 +1157,30 @@ async function resetAll() {
    Save / Animation list
    ============================================================ */
 
+function nextDefaultAnimName(sheet) {
+  const used = new Set(
+    (sheet.animations || [])
+      .map((a) => (a && typeof a.name === 'string' ? a.name.trim() : ''))
+      .filter(Boolean),
+  );
+  for (let i = 1; i < 10000; i++) {
+    const candidate = `animation ${i}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `animation ${Date.now()}`;
+}
+
 async function saveAnimation() {
   const sheet = getActiveSheet();
   if (!sheet) { toast('No sheet selected.', 'warn'); return; }
   const ed = state.ui.editing;
-  const name = (ed.name || '').trim();
-  if (!name) { toast('Animation name is required.', 'warn'); els.animName.focus(); return; }
   if (!ed.frames.length) { toast('Select at least one frame.', 'warn'); return; }
+  let name = (ed.name || '').trim();
+  if (!name) {
+    name = nextDefaultAnimName(sheet);
+    ed.name = name;
+    if (els.animName) els.animName.value = name;
+  }
   const fps = Math.max(1, Number(ed.fps) || 1);
   const kind = ed.kind === 'freepick' ? 'freepick' : 'grid';
 

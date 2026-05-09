@@ -694,6 +694,12 @@ function onPointerUp(e) {
 
 function onContextMenu(e) {
   e.preventDefault();
+  // On touch devices, the browser fires a synthetic contextmenu after the
+  // platform long-press AND our own pressTimer fires — cancel/skip whichever
+  // is second so we only delete one frame per gesture.
+  cancelLongPress();
+  if (longPressFired) return;
+  longPressFired = true;
   if (sheetState.mode === 'grid') {
     if (sheetState.columns === 0) return;
     const idx = cellIndexAtPoint(e.clientX, e.clientY);
