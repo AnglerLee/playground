@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <title>동물 친구</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="world-layer"></div>
+  <div id="fx-layer"></div>
+  <div id="bubble-layer"></div>
+  <div id="stats-panel" aria-label="동물 상태"></div>
+  <div id="picker" aria-label="동물 선택"></div>
+  <div id="care-panel" aria-label="돌봄 액션"></div>
+  <div id="hint">드래그로 쓰다듬고, 탭으로 인사하세요. 먹이와 공은 빈 곳에 두면 직접 가지러 갑니다.</div>
+  <a id="back-link" href="../">← 편집기로</a>
+  <div id="status" role="status" aria-live="polite">Loading...</div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
